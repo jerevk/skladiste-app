@@ -136,34 +136,56 @@ async function orderList(){
  $('orderFilter').oninput=()=>filterGroupedRows('orderFilter','orderLine');
 }
 async function total(){
-const data=await run('appGetTotalState',state.token);
-const entries=(data.values||[]).slice(1);
-const structured=Array.isArray(data.items)?data.items:entries.map(r=>({key:'',mode:r[0],group_name:r[1],item_name:r[2],current_qty:r[3]}));
-const byMode=key=>structured.filter(r=>r.mode===key);
-function makeSide(modes){
- const lines=[];
- for(const mode of modes){
-  const label=MODES.find(m=>m[0]===mode)?.[1]||mode;
-  const items=byMode(mode);
-  if(!items.length)continue;
-  lines.push({name:label.toUpperCase(),qty:'',kind:'category'});
-  for(const group of orderedGroupNames(mode,items)){
-   lines.push({name:group,qty:'',kind:'group'});
-   for(const item of orderedItems(mode,items.filter(i=>itemGroup(mode,i)===group))){
-    lines.push({name:item.item_name,qty:item.current_qty??'',kind:'item'});
-   }
-  }
- }
- return lines;
-}
-const left=makeSide(['pivo','pica']),right=makeSide(['zesta','toplo','fridge']);
-const rowCount=Math.max(31,left.length,right.length);
-const rows=Array.from({length:rowCount},(_,i)=>[left[i]?.name||'',left[i]?.qty??'','',right[i]?.name||'',right[i]?.qty??'']);
-const kind=(side,i)=>side[i]?.kind||'empty';
-const cells=rows.map((r,i)=>r.map((v,j)=>'<div class="sheetCell '+(j===2?'sheetDivider':j===1||j===4?'sheetValue':'sheetName')+' sheet-'+(j<2?kind(left,i):j>2?kind(right,i):'empty')+'">'+x(v)+'</div>').join('')).join('');
-shell('<section class="sheetPage"><div class="sheetIntro"><strong>Ukupno stanje</strong><p>Pregled stanja u rasporedu A:E, s podacima iz Cloudflare baze.</p></div><div class="copybar originalCopybar"><div><strong>B1:B14</strong><small>Kopiraj 14 vrijednosti iz stupca B, jedna ispod druge.</small></div><button class="soft" id="copyTotal">Kopiraj stanje</button></div><div class="sheetToolbar"><button class="soft" id="exportTotal">↓ CSV</button><span>Pomakni tablicu vodoravno ako je zaslon uzak.</span></div><div class="sheetScroller"><div class="sheetFiveGrid">'+cells+'</div></div></section>','Ukupno stanje');
-$('copyTotal').onclick=async()=>{const value=rows.slice(0,14).map(r=>typeof r[1]==='number'?String(r[1]).replace('.',','):r[1]!==''&&Number.isFinite(Number(r[1]))?String(r[1]).replace('.',','):'').join('\n');try{await navigator.clipboard.writeText(value)}catch(e){const ta=document.createElement('textarea');ta.value=value;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}toast('Kopirano 14 vrijednosti iz stupca B.')};
-$('exportTotal').onclick=()=>exportCSV(rows,['A','B','C','D','E']);
+ const data=await run('appGetTotalState',state.token);
+ const items=Array.isArray(data.items)?data.items:(data.values||[]).slice(1).map((r,i)=>({key:'legacy-'+i,mode:r[0],group_name:r[1],item_name:r[2],current_qty:r[3]}));
+ const rowsIn=mode=>items.filter(i=>i.mode===mode);
+ const qty=arr=>Math.round(arr.reduce((s,i)=>s+(Number(i.current_qty)||0),0)*1000)/1000;
+ const stock=(mode,predicate)=>qty(rowsIn(mode).filter(predicate));
+ const byGroup=(mode,...groups)=>stock(mode,i=>groups.includes(itemGroup(mode,i)));
+ const byName=(mode,...names)=>stock(mode,i=>names.includes(i.item_name));
+ const fridge=rowsIn('fridge');
+ const fromFridge=(...groups)=>qty(fridge.filter(i=>groups.includes(itemGroup('fridge',i))));
+ const total=(stored,cooled=0)=>Math.round((stored+cooled)*1000)/1000;
+ const left=[
+  ['PIVO',()=>total(byGroup('pivo','Veliko pivo'),fromFridge('PIVO'))],
+  ['MALO PIVO',()=>total(byGroup('pivo','Malo pivo'),fromFridge('MALO PIVO'))],
+  ['STELLA',()=>total(byName('pivo','Stella'),fromFridge('STELLA'))],
+  ['Madri',()=>total(byName('pivo','Madri'),fromFridge('Madri'))],
+  ['Blue Moon',()=>total(byName('pivo','Blue Moon'),fromFridge('Blue Moon'))],
+  ['TOMISLAV+RADLER',()=>total(byGroup('pivo','Tomislav + Radler'),fromFridge('TOMISLAV + RADLER'))],
+  ['MALA MINERALNA',()=>total(byGroup('pica','Mala mineralna'),fromFridge('MALA MINERALNA'))],
+  ['JAMNICA SENZACIJA',()=>total(byGroup('pica','Okusi'),fromFridge('JAMNICA SENZACIJA'))],
+  ['LEDENI ČAJ',()=>total(byGroup('pica','Ledeni čaj'),fromFridge('LEDENI ČAJ'))],
+  ['RED BULL',()=>total(byGroup('pica','Energetska pića'),fromFridge('RED BULL'))],
+  ['HELL',()=>byName('pica','Hell','HELL')],
+  ['GAZIRANI SOK',()=>total(byGroup('pica','Gazirani sok'),fromFridge('GAZIRANI SOK'))],
+  ['PRIRODNI SOK',()=>total(byGroup('pica','Pago'),fromFridge('PRIRODNI SOK'))],
+  ['HIDRA',()=>total(byGroup('pica','Hidra'),fromFridge('HIDRA'))],
+  ['',null],
+  ['SOMMERSBY',()=>byGroup('pica','Sommersby')],
+  ['CEDEVITA VR',()=>byGroup('pica','Cedevite')],
+  ['MINERALNA',()=>byGroup('pica','Mineralna')],
+  ['BIJELO VINO',()=>stock('pica',i=>itemGroup('pica',i)==='Vino'&&/^Bijelo/i.test(i.item_name))],
+  ['CRNO VINO',()=>stock('pica',i=>itemGroup('pica',i)==='Vino'&&/^Crno/i.test(i.item_name))],
+  ['',null],
+  ['Kapucino',()=>byGroup('toplo','Cappuccino')],
+  ['Kava',()=>byName('toplo','Kava')],
+  ['Šećer',()=>byName('toplo','Šećer')],
+  ['Nesica',()=>byName('toplo','Nesica')],
+  ['Topla čokolada',()=>byName('toplo','Topla čokolada')],
+  ['Kakao',()=>byName('toplo','Kakao')],
+  ['',null],
+  ['Mlijeko',()=>byName('toplo','Mlijeko')],
+  ['Šlag',()=>byName('toplo','Šlag')]
+ ];
+ const spirits=['Konjak','Stock','Gin','Amaro 18','Pelinkovac','Pelin Antique','Šljivovica','Lozovaća','Roner Williams','Liker borovnica','Vodka','Vigor Blueberry','Medovača','Martini bianco','Jack Daniels','Johnnie Walker','Bacardi Rum','Korlat Orahovac','Korlat Dunja','Korlat Vilja','Jameson','Bombay Gin','Jegermeister','Višnjevac'];
+ const right=spirits.map(name=>[name,()=>byName('zesta',name)]);
+ const format=v=>v===null||v===undefined?'':String(v).replace('.',',');
+ const sheetRows=Array.from({length:31},(_,i)=>[left[i]?.[0]||'',left[i]?.[1]?left[i][1]():null,'',right[i]?.[0]||'',right[i]?.[1]?right[i][1]():null]);
+ const cellHTML=sheetRows.map((r,i)=>r.map((v,j)=>'<div class="sheetCell '+(j===2?'sheetDivider':j===1||j===4?'sheetValue':'sheetName')+'">'+x(j===1||j===4?format(v):v)+'</div>').join('')).join('');
+ shell('<section class="sheetPage"><div class="sheetIntro"><strong>Ukupno stanje</strong><p>Isti redoslijed 31 retka i raspored A:E kao u izvornom listu ukupno. Količine se računaju iz D1 baze.</p></div><div class="copybar originalCopybar"><div><strong>B1:B14</strong><small>Kopiraj prvih 14 zbrojeva, redom kao u izvornom listu.</small></div><button class="soft" id="copyTotal">Kopiraj stanje</button></div><div class="sheetToolbar"><button class="soft" id="exportTotal">↓ CSV</button><span>Pomakni tablicu vodoravno ako je zaslon uzak.</span></div><div class="sheetScroller"><div class="sheetFiveGrid">'+cellHTML+'</div></div></section>','Ukupno stanje');
+ $('copyTotal').onclick=async()=>{const value=sheetRows.slice(0,14).map(r=>format(r[1])).join('\n');try{await navigator.clipboard.writeText(value)}catch(e){const ta=document.createElement('textarea');ta.value=value;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}toast('Kopirano B1:B14.')};
+ $('exportTotal').onclick=()=>exportCSV(sheetRows,['A','B','C','D','E']);
 }
 async function backups(){
 const result=await run('appGetBackups',state.token),comparison=result.comparison;
