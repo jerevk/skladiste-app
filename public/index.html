@@ -179,7 +179,7 @@ async function total(){
   ['Šlag',()=>byName('toplo','Šlag')]
  ];
  const spirits=['Konjak','Stock','Gin','Amaro 18','Pelinkovac','Pelin Antique','Šljivovica','Lozovaća','Roner Williams','Liker borovnica','Vodka','Vigor Blueberry','Medovača','Martini bianco','Jack Daniels','Johnnie Walker','Bacardi Rum','Korlat Orahovac','Korlat Dunja','Korlat Vilja','Jameson','Bombay Gin','Jegermeister','Višnjevac'];
- const right=spirits.map(name=>[name,()=>byName('zesta',name)]);
+ const right=[...spirits.slice(0,3).map(name=>[name,()=>byName('zesta',name)]),['',null],['',null],...spirits.slice(3).map(name=>[name,()=>byName('zesta',name)])];
  const format=v=>v===null||v===undefined?'':String(v).replace('.',',');
  const sheetRows=Array.from({length:31},(_,i)=>[left[i]?.[0]||'',left[i]?.[1]?left[i][1]():null,'',right[i]?.[0]||'',right[i]?.[1]?right[i][1]():null]);
  const cellHTML=sheetRows.map((r,i)=>r.map((v,j)=>'<div class="sheetCell '+(j===2?'sheetDivider':j===1||j===4?'sheetValue':'sheetName')+'">'+x(j===1||j===4?format(v):v)+'</div>').join('')).join('');
