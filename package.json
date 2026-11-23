@@ -1,0 +1,15 @@
+{
+  "name": "skladiste-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 execute skladiste-db --local --file=./schema.sql",
+    "db:remote": "wrangler d1 execute skladiste-db --remote --file=./schema.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
