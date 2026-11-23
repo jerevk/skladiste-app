@@ -45,7 +45,7 @@ const groups=orderedGroupNames(sec.key,matching);
 const total=sum(matching);
 return '<details class="scriptSection" open><summary><span>▶ &nbsp; '+x(sec.title).toUpperCase()+'</span><span class="scriptPill">'+x(total)+'</span></summary>'+groups.map(g=>{const items=orderedItems(sec.key,matching.filter(i=>itemGroup(sec.key,i)===g));return '<details class="scriptGroup"><summary><span>▶ &nbsp;'+x(g)+'</span><span class="scriptPill">'+x(sum(items))+'</span></summary><div>'+items.map(i=>'<div class="scriptItem"><div><strong>'+x(i.item_name)+'</strong><small>Stanje '+x(i.current_qty??'—')+'</small></div><span class="scriptQty">'+x(i.current_qty??'—')+'</span></div>').join('')+'</div></details>'}).join('')+'</details>'}).join('');
 const fm=fridge.filter(i=>(i.item_name+' '+i.group_name+' Frižider').toLocaleLowerCase('hr').includes(q));
-if(fm.length){const groups=[...new Set(fm.map(i=>i.group_name||'Ostalo'))];html+='<details class="scriptSection" open><summary><span>▶ &nbsp; FRIŽIDER</span><span class="scriptPill">'+fridgeFull+' punih</span></summary>'+groups.map(g=>'<details class="scriptGroup"><summary><span>▶ &nbsp;'+x(g)+'</span><span class="scriptPill">'+fm.filter(i=>(i.group_name||'Ostalo')===g).length+' mjesta</span></summary><div>'+fm.filter(i=>(i.group_name||'Ostalo')===g).map(i=>'<div class="scriptItem"><div><strong>'+x(i.item_name)+'</strong><small>Rupe '+x(i.current_qty??'—')+' · Kapacitet '+x(i.full_capacity??'—')+'</small></div><span class="scriptQty">'+x(i.full_capacity==null?'—':Math.max(0,Number(i.full_capacity)-Number(i.current_qty||0)))+'</span></div>').join('')+'</div></details>').join('')+'</details>'}
+if(fm.length){const groups=orderedGroupNames('fridge',fm);html+='<details class="scriptSection" open><summary><span>▶ &nbsp; FRIŽIDER</span><span class="scriptPill">'+fridgeFull+' punih</span></summary>'+groups.map(g=>'<details class="scriptGroup"><summary><span>▶ &nbsp;'+x(g)+'</span><span class="scriptPill">'+fm.filter(i=>itemGroup('fridge',i)===g).length+' mjesta</span></summary><div>'+orderedItems('fridge',fm.filter(i=>itemGroup('fridge',i)===g)).map(i=>'<div class="scriptItem"><div><strong>'+x(i.item_name)+'</strong><small>Rupe '+x(i.current_qty??'—')+' · Kapacitet '+x(i.full_capacity??'—')+'</small></div><span class="scriptQty">'+x(i.full_capacity==null?'—':Math.max(0,Number(i.full_capacity)-Number(i.current_qty||0)))+'</span></div>').join('')+'</div></details>').join('')+'</details>'}
 $('scriptTree').innerHTML=html||'<div class="scriptNotice">Nema pronađenih artikala.</div>';
 }
 renderTree();
@@ -112,7 +112,7 @@ function orderedGroupNames(mode,items){
 }
 function orderedItems(mode,items){return [...items].sort((a,b)=>itemOrder(mode,a)-itemOrder(mode,b))}
 function groupedCatalogHTML(sections,makeRow){
- return (sections||[]).map(sec=>{
+ return [...(sections||[])].sort((a,b)=>{const order=['pivo','pica','toplo','zesta','fridge'];return order.indexOf(a.key)-order.indexOf(b.key)}).map(sec=>{
  const items=sec.items||[];
  const groups=orderedGroupNames(sec.key,items);
  return '<details class="countGroup categoryLevel"><summary>'+x(sec.title||sec.key)+' <span>'+items.length+' artikala</span></summary><div class="categoryBody">'+groups.map(g=>{
