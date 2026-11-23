@@ -56,7 +56,7 @@ function reviewCount(entries,note){const map=Object.fromEntries(entries.map(e=>[
 
 
 const ORIGINAL_GROUP_ORDER={
- pivo:['Veliko pivo','Malo pivo','Tomislav + Radler','Ostala piva'],
+ pivo:['Veliko pivo','Malo pivo','Ostala piva','Tomislav + Radler'],
  pica:['Gazirani sok','Mala mineralna','Sommersby','Hidra','Okusi','Ledeni čaj','Pago','Mineralna','Energetska pića','Cedevite','Vino'],
  zesta:['Žesta'],toplo:['Cappuccino','Toplo'],
  fridge:['PIVO','MALO PIVO','STELLA','Blue Moon','Madri','TOMISLAV + RADLER','MALA MINERALNA','JAMNICA SENZACIJA','LEDENI ČAJ','RED BULL','GAZIRANI SOK','PRIRODNI SOK','HIDRA']
@@ -138,7 +138,8 @@ async function orderList(){
 async function total(){
 const data=await run('appGetTotalState',state.token);
 const entries=(data.values||[]).slice(1);
-const byMode=key=>entries.filter(r=>r[0]===key).map(r=>({key:null,group_name:r[1],item_name:r[2],current_qty:r[3]}));
+const structured=Array.isArray(data.items)?data.items:entries.map(r=>({key:'',mode:r[0],group_name:r[1],item_name:r[2],current_qty:r[3]}));
+const byMode=key=>structured.filter(r=>r.mode===key);
 function makeSide(modes){
  const lines=[];
  for(const mode of modes){
