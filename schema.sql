@@ -33,6 +33,18 @@ CREATE TABLE IF NOT EXISTS supply_lines (
  item_id TEXT NOT NULL REFERENCES items(id), qty REAL NOT NULL CHECK(qty>0),
  decision TEXT NOT NULL DEFAULT '', stock_before REAL, stock_after REAL
 );
+
+CREATE TABLE IF NOT EXISTS snapshots (
+ id TEXT PRIMARY KEY,
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS snapshot_lines (
+ snapshot_id TEXT NOT NULL REFERENCES snapshots(id),
+ item_id TEXT NOT NULL REFERENCES items(id),
+ qty REAL NOT NULL,
+ PRIMARY KEY(snapshot_id,item_id)
+);
 CREATE TABLE IF NOT EXISTS guard_checks (ok INTEGER NOT NULL CHECK(ok=1));
 CREATE INDEX IF NOT EXISTS idx_items_category ON items(category,active);
 CREATE INDEX IF NOT EXISTS idx_movements_created ON movements(created_at DESC);
