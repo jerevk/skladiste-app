@@ -4,7 +4,7 @@ const uid=()=>crypto.randomUUID();
 const timestamp=()=>new Date().toISOString();
 const randomHex=(n=16)=>Array.from(crypto.getRandomValues(new Uint8Array(n))).map(x=>x.toString(16).padStart(2,"0")).join("");
 async function hashText(s){const bytes=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(String(s)));return Array.from(new Uint8Array(bytes)).map(x=>x.toString(16).padStart(2,"0")).join("")}
-async function pinHash(pin,salt){const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(String(pin)),"PBKDF2",false,["deriveBits"]);const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt:new TextEncoder().encode(salt),iterations:160000,hash:"SHA-256"},key,256);return Array.from(new Uint8Array(bits)).map(x=>x.toString(16).padStart(2,"0")).join("")}
+async function pinHash(pin,salt){const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(String(pin)),"PBKDF2",false,["deriveBits"]);const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt:new TextEncoder().encode(salt),iterations:100000,hash:"SHA-256"},key,256);return Array.from(new Uint8Array(bits)).map(x=>x.toString(16).padStart(2,"0")).join("")}
 const bad=(msg,code=400)=>{const e=new Error(msg);e.status=code;throw e};
 const text=(s,max=200)=>String(s??"").trim().slice(0,max);
 const qty=(v,allowZero=false)=>{const n=Number(String(v??"").replace(",","."));if(!Number.isFinite(n)||n<0||(!allowZero&&n===0)||n>10000000)bad("Neispravna količina.");return Math.round(n*1000)/1000};
