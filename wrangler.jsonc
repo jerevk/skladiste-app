@@ -5,6 +5,6 @@
   "compatibility_date": "2026-11-01",
   "assets": { "directory": "./public", "binding": "ASSETS" },
   "d1_databases": [
-    { "binding": "DB", "database_name": "skladiste-db", "database_id": "REPLACE_WITH_D1_DATABASE_ID" }
+    { "binding": "DB", "database_name": "skladiste-db", "database_id": "2cf8102e-6d7b-40a5-99bc-93ebff7b4872" }
   ]
 }
