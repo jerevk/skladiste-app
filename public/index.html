@@ -149,6 +149,19 @@ html[data-theme="dark"] .orderMissing{background:#25453b;color:#bdf6d7}
 .orderShortRow .sub b{font-weight:800;color:inherit}
 @media(max-width:570px){.orderShortRow{grid-template-columns:minmax(0,1fr) auto}.orderMissing{min-width:82px;padding:7px}}
 .rememberDevice{display:flex;align-items:center;gap:9px;font-size:13px;color:inherit}.rememberDevice input{width:19px;height:19px;flex:none}.auditEntry{padding:14px 2px;border-bottom:1px solid #475569}.auditEntry[hidden]{display:none}.auditEntryTop{display:flex;justify-content:space-between;gap:12px;font-size:13px}.auditEntryTop span,.auditEntry small{color:#a8b6ca;font-size:12px}.auditAction{font-size:13px;font-weight:750;color:#79b8ff;margin-top:6px}.auditEntry p{margin:4px 0 6px;line-height:1.5;font-size:13px;overflow-wrap:anywhere}html[data-theme="light"] .auditEntry{border-color:#dfe6f0}html[data-theme="light"] .auditEntryTop span,html[data-theme="light"] .auditEntry small{color:#667085}html[data-theme="light"] .auditAction{color:#215ba8}
+
+.auditDay{background:transparent;border:1px solid #43536b;border-radius:12px;margin:10px 0;overflow:hidden}
+.auditDay[hidden],.auditEntry[hidden]{display:none!important}
+.auditDay>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;padding:15px 14px;font-weight:800;list-style:none;background:#223248;color:#f1f5f9}
+.auditDay>summary::-webkit-details-marker{display:none}
+.auditDayCount{font-size:12px;font-weight:600;color:#b9c7d9;white-space:nowrap}
+.auditDay[open]>summary{border-bottom:1px solid #43536b}
+.auditDayBody{padding:0 13px}
+.auditDayBody .auditEntry:last-child{border-bottom:0}
+html[data-theme="light"] .auditDay{border-color:#dfe6f0}
+html[data-theme="light"] .auditDay>summary{background:#f2f6fb;color:#20334e}
+html[data-theme="light"] .auditDayCount{color:#64748b}
+html[data-theme="light"] .auditDay[open]>summary{border-color:#dfe6f0}
 </style></head><body><div id="root"></div><div id="toast" class="toast hide"></div><script>
 const THEME_KEY='skladiste-theme';
 function applyTheme(theme){const next=theme==='light'?'light':'dark';document.documentElement.dataset.theme=next;try{localStorage.setItem(THEME_KEY,next)}catch{}document.querySelectorAll('[data-theme-toggle]').forEach(b=>{b.textContent=next==='dark'?'☀':'☾';b.title=next==='dark'?'Svijetla tema':'Tamna tema';b.setAttribute('aria-label',b.title)});document.querySelector('meta[name="theme-color"]')?.setAttribute('content',next==='dark'?'#101621':'#f4f6fa')}
@@ -440,10 +453,28 @@ function adminGroupOptions(mode,selected=''){
 }
 async function audit(){
  if(state.user?.role!=='ADMIN')return openPage('home');
- const rows=await run('appGetAudit',state.token,200);
- const label=d=>{try{return new Date(d.replace(' ','T')+'Z').toLocaleString('hr-HR',{dateStyle:'short',timeStyle:'short'})}catch{return d}};
- shell('<section class="panel"><div class="panelTop"><h2>Dnevnik aktivnosti</h2><span class="chip">'+rows.length+' zapisa</span></div><p class="hint">Tko je izvršio radnju, kada i s kojeg uređaja. Bilježe se prijave, odjave, unos robe, rupe, donos, inventura i administrativne promjene. Uređaj je opis preglednika, ne GPS lokacija.</p><input id="auditFilter" class="search" placeholder="Traži konobara ili radnju"><div id="auditRows">'+(rows.length?rows.map(r=>'<div class="auditEntry" data-name="'+x((r.actor+' '+r.action+' '+r.description+' '+r.device).toLocaleLowerCase('hr'))+'"><div class="auditEntryTop"><strong>'+x(r.actor)+'</strong><span>'+x(label(r.createdAt))+'</span></div><div class="auditAction">'+x(r.action)+'</div><p>'+x(r.description)+'</p><small>'+x(r.device||'Nepoznat uređaj')+'</small></div>').join(''):'<div class="hint">Još nema zabilježenih aktivnosti.</div>')+'</div></section>','Dnevnik aktivnosti');
- $('auditFilter').oninput=()=>{const q=$('auditFilter').value.toLocaleLowerCase('hr');document.querySelectorAll('.auditEntry').forEach(el=>el.hidden=!el.dataset.name.includes(q))};
+ const rows=await run('appGetAudit',state.token,300);
+ const dateOf=d=>{const date=new Date(String(d).replace(' ','T')+'Z');return Number.isNaN(date.getTime())?null:date};
+ const localDate=d=>{const date=dateOf(d);return date?new Intl.DateTimeFormat('hr-HR',{timeZone:'Europe/Zagreb',year:'numeric',month:'2-digit',day:'2-digit'}).format(date):String(d).slice(0,10)};
+ const localTime=d=>{const date=dateOf(d);return date?new Intl.DateTimeFormat('hr-HR',{timeZone:'Europe/Zagreb',hour:'2-digit',minute:'2-digit'}).format(date):String(d).slice(11,16)};
+ const days=new Map();
+ rows.forEach(r=>{const key=localDate(r.createdAt);if(!days.has(key))days.set(key,[]);days.get(key).push(r)});
+ const entryHTML=r=>'<div class="auditEntry" data-name="'+x((r.actor+' '+r.action+' '+r.description+' '+r.device).toLocaleLowerCase('hr'))+'"><div class="auditEntryTop"><strong>'+x(r.actor)+'</strong><span>'+x(localTime(r.createdAt))+'</span></div><div class="auditAction">'+x(r.action)+'</div><p>'+x(r.description)+'</p><small>'+x(r.device||'Nepoznat uređaj')+'</small></div>';
+ const groups=[...days].map(([date,items])=>'<details class="auditDay"><summary><span>'+x(date)+'</span><span class="auditDayCount">'+items.length+' '+(items.length===1?'zapis':'zapisa')+' <span aria-hidden="true">⌄</span></span></summary><div class="auditDayBody">'+items.map(entryHTML).join('')+'</div></details>').join('');
+ shell('<section class="panel"><div class="panelTop"><h2>Dnevnik aktivnosti</h2><span class="chip">'+rows.length+' zapisa</span></div><p class="hint">Otvori datum za pregled tko je što radio i u koliko sati.</p><input id="auditFilter" class="search" placeholder="Traži konobara ili radnju"><div id="auditRows">'+(rows.length?groups:'<div class="hint">Još nema zabilježenih aktivnosti.</div>')+'</div></section>','Dnevnik aktivnosti');
+ $('auditFilter').oninput=()=>{
+  const q=$('auditFilter').value.toLocaleLowerCase('hr').trim();
+  document.querySelectorAll('.auditDay').forEach(day=>{
+   let visible=0;
+   day.querySelectorAll('.auditEntry').forEach(entry=>{
+    const match=!q||entry.dataset.name.includes(q);entry.hidden=!match;if(match)visible++;
+   });
+   day.hidden=visible===0;
+   day.querySelector('.auditDayCount').textContent=visible+' '+(visible===1?'zapis':'zapisa')+' ⌄';
+   if(q&&visible)day.open=true;
+   if(!q)day.open=false;
+  });
+ };
 }
 async function admin(){
  if(state.user?.role!=='ADMIN')return openPage('home');
