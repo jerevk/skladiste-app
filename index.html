@@ -306,7 +306,7 @@ html[data-theme="light"] .compareSummary span{color:#6b7c92}
 .supplyFullPage .supplyChoiceBtn{min-width:58px}
 }
 .backupHealthHost{margin:0 0 14px}.backupStatus{max-width:100%;border-left:3px solid #c99531}.backupWarning{color:var(--fg,#6b4935);font-size:13px;line-height:1.5}.backupStatus .panelTop{flex-wrap:wrap}
-</style></head><body><div id="root"></div><div id="toast" class="toast hide"></div><script>
+.supplyViewRow{gap:12px}.supplyViewRight{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap;text-align:right}.supplyViewRight>strong{font-size:16px;font-variant-numeric:tabular-nums}.supplyViewDecision{border-radius:9px;padding:6px 9px;font-weight:800;font-size:12px;white-space:nowrap}.supplyViewYes{background:#e4f4ec;color:#14643f}.supplyViewNo{background:#fdebee;color:#9c2436}.supplyViewPending{background:#f0f2f5;color:#586477}html[data-theme="dark"] .supplyViewYes{background:#143c2e;color:#9af0ba}html[data-theme="dark"] .supplyViewNo{background:#4e222b;color:#ffb8c3}html[data-theme="dark"] .supplyViewPending{background:#283449;color:#d6deea}@media(max-width:640px){.supplyViewRow{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center}.supplyViewRight{flex-direction:column;align-items:flex-end;gap:4px}.supplyViewDecision{font-size:11px}}</style></head><body><div id="root"></div><div id="toast" class="toast hide"></div><script>
 const THEME_KEY='skladiste-theme';
 function applyTheme(theme){const next=theme==='light'?'light':'dark';document.documentElement.dataset.theme=next;try{localStorage.setItem(THEME_KEY,next)}catch{}document.querySelectorAll('[data-theme-toggle]').forEach(b=>{b.textContent=next==='dark'?'☀':'☾';b.title=next==='dark'?'Svijetla tema':'Tamna tema';b.setAttribute('aria-label',b.title)});document.querySelector('meta[name="theme-color"]')?.setAttribute('content',next==='dark'?'#101621':'#f4f6fa')}
 try{applyTheme(localStorage.getItem(THEME_KEY)||'dark')}catch{applyTheme('dark')}
@@ -521,17 +521,30 @@ async function goods(type){const incoming=type==='incoming',catalog=await run('a
 }
 async function openSupplyList(id){
  const d=await run('appGetSupplyList',state.token,id);
+ const finished=d.status==='ZAVRSENO',canEdit=!finished||state.user?.role==='ADMIN';
+ const grouped=groupedCatalogHTML(MODES.slice(0,4).map(m=>({key:m[0],title:m[1],items:d.items.filter(i=>i.section===m[0]).map(i=>({...i,group_name:i.group}))})).filter(g=>g.items.length),it=>{
+  const label=it.decision==='DONESENO'?'✓ Ima':it.decision==='NEMA'?'✕ Nema':'Nije označeno';
+  const cl=it.decision==='DONESENO'?'supplyViewYes':it.decision==='NEMA'?'supplyViewNo':'supplyViewPending';
+  return '<div class="line supplyViewRow"><div><strong>'+x(it.item)+'</strong><div class="sub">'+x(it.group)+'</div></div><div class="supplyViewRight"><strong>'+x(it.qty)+'</strong><span class="supplyViewDecision '+cl+'">'+label+'</span></div></div>'
+ }).replace(/<details class="countGroup (categoryLevel|subgroupLevel)">/g,'<details class="countGroup $1" open>');
+ shell('<div class="supplyFullPage"><button class="soft supplyBack" id="backToSupply">← Natrag na popise</button><section class="panel"><div class="panelTop"><h2>Pregled donosa · '+x(d.waiter||'')+'</h2><span class="chip">'+(finished?'Zaključano':'U tijeku')+'</span></div><p class="hint">Izrađeno '+x(d.createdAt)+(d.completedAt?' · Završeno '+x(d.completedAt):'')+(d.confirmedBy?' · Potvrdio '+x(d.confirmedBy):'')+'</p><p class="hint">'+(finished?'Popis je završen i zaključan. '+(state.user?.role==='ADMIN'?'Samo administrator može unijeti ispravak.':'Za ispravak se obrati administratoru.'):'Ovo je pregled bez mogućnosti mijenjanja. Za izmjene otvori Uredi.')+'</p><div class="supplyViewList">'+grouped+'</div>'+(canEdit?'<div class="stickySave"><span class="sub">'+(finished?'Administratorski ispravak':'Uredi količine i potvrde')+'</span><button class="primary" id="editSupplyList">'+(finished?'Ispravi popis':'Uredi')+'</button></div>':'')+'</section></div>','Pregled donosa');
+ $('backToSupply').onclick=()=>goods('supply');
+ if(canEdit)$('editSupplyList').onclick=()=>openSupplyEditor(id);
+}
+async function openSupplyEditor(id){
+ const d=await run('appGetSupplyList',state.token,id);
  const finished=d.status==='ZAVRSENO';
+ if(finished&&state.user?.role!=='ADMIN'){toast('Završeni popis može ispraviti samo administrator.');return openSupplyList(id)}
  let original=d.items.map(it=>({key:String(it.key),value:Number(it.qty),decision:String(it.decision||''),originalQty:Number(it.qty),originalDecision:String(it.decision||'')}));
  const lineHTML=it=>{
   const n=Number(it.qty),decision=String(it.decision||'');
   return '<div class="line supplyEditLine" data-supply-row="'+x(it.key)+'"><div><strong>'+x(it.item)+'</strong><div class="sub">Skladište pri izradi: '+x(it.stock)+' · '+x(it.group)+'</div></div><div class="supplyEditControls"><div class="stepperUI"><button type="button" class="stepperBtn supplyAdjust" data-delta="-1">−</button><input class="qty supplyQty" type="number" min="0.001" step="'+(it.section==='zesta'?'0.1':'1')+'" value="'+x(n)+'" inputmode="decimal" aria-label="Količina '+x(it.item)+'"><button type="button" class="stepperBtn supplyAdjust" data-delta="1">+</button></div><div class="supplyChoiceButtons" role="group" aria-label="Potvrda '+x(it.item)+'"><input type="hidden" class="supplyChoice" value="'+x(decision)+'"><button type="button" class="supplyChoiceBtn supplyYes'+(decision==='DONESENO'?' is-selected':'')+'" data-decision="DONESENO" aria-pressed="'+(decision==='DONESENO')+'" title="Doneseno"><span aria-hidden="true">✓</span><small>Ima</small></button><button type="button" class="supplyChoiceBtn supplyNo'+(decision==='NEMA'?' is-selected':'')+'" data-decision="NEMA" aria-pressed="'+(decision==='NEMA')+'" title="Nema"><span aria-hidden="true">✕</span><small>Nema</small></button></div></div></div>';
  };
  const grouped=groupedCatalogHTML(MODES.slice(0,4).map(m=>({key:m[0],title:m[1],items:d.items.filter(i=>i.section===m[0]).map(i=>({...i,group_name:i.group}))})).filter(s=>s.items.length),lineHTML).replace(/<details class="countGroup (categoryLevel|subgroupLevel)">/g,'<details class="countGroup $1" open>');
- shell('<div class="supplyFullPage"><button type="button" class="soft supplyBack" id="backToSupply">← Natrag na popise</button><div id="supplyDetail"></div></div>','Popis za donos');
+ shell('<div class="supplyFullPage"><button type="button" class="soft supplyBack" id="backToSupply">← Natrag na popise</button><div id="supplyDetail"></div></div>','Uređivanje donosa');
  const detail=$('supplyDetail');
- $('backToSupply').onclick=()=>goods('supply');
- detail.innerHTML='<div class="panel" style="margin-top:16px"><div class="panelTop"><h2>Popis za donos · '+x(d.waiter||'')+'</h2><span class="chip">'+(finished?'Završeno':'Čeka')+'</span></div><p class="hint">Izrađeno '+x(d.createdAt)+(d.completedAt?' · Završeno '+x(d.completedAt):'')+(d.confirmedBy?' · Potvrdio '+x(d.confirmedBy):'')+'</p><p class="hint">'+(finished?'Naknadna izmjena popisa korigira stanje skladišta samo za razliku. Svaka korekcija ostaje evidentirana.':'Promjena bilo koje količine poništava sve potvrde. Za završetak označi svaki artikl.')+'</p><div id="supplyEditRows">'+grouped+'</div><div class="stickySave"><button class="soft" id="saveSupplyDraft">'+(finished?'Spremi ispravak':'Spremi popis')+'</button><button class="primary" id="finishSupply"'+(finished?' style="display:none"':' disabled')+'>Gotovo</button></div></div>';
+ $('backToSupply').onclick=()=>openSupplyList(id);
+ detail.innerHTML='<div class="panel" style="margin-top:16px"><div class="panelTop"><h2>Uređivanje donosa · '+x(d.waiter||'')+'</h2><span class="chip">'+(finished?'Završeno':'Čeka')+'</span></div><p class="hint">Izrađeno '+x(d.createdAt)+(d.completedAt?' · Završeno '+x(d.completedAt):'')+(d.confirmedBy?' · Potvrdio '+x(d.confirmedBy):'')+'</p><p class="hint">'+(finished?'Naknadna izmjena popisa korigira stanje skladišta samo za razliku. Svaka korekcija ostaje evidentirana.':'Promjena bilo koje količine poništava sve potvrde. Za završetak označi svaki artikl.')+'</p><div id="supplyEditRows">'+grouped+'</div><div class="stickySave"><button class="soft" id="saveSupplyDraft">'+(finished?'Spremi ispravak':'Spremi popis')+'</button><button class="primary" id="finishSupply"'+(finished?' style="display:none"':' disabled')+'>Gotovo</button></div></div>';
  const rows=[...detail.querySelectorAll('[data-supply-row]')];
  const decisions=()=>rows.map(el=>{const old=original.find(v=>v.key===el.dataset.supplyRow);return{key:el.dataset.supplyRow,value:el.querySelector('.supplyQty').value,decision:el.querySelector('.supplyChoice').value,originalQty:old.originalQty,originalDecision:old.originalDecision}});
  const valid=()=>rows.every(el=>{const value=Number(el.querySelector('.supplyQty').value);return el.querySelector('.supplyQty').value.trim()!==''&&Number.isFinite(value)&&value>0&&value<=10000000});
@@ -563,7 +576,7 @@ async function openSupplyList(id){
    }
   }catch(e){toast('Nije moguće provjeriti aktualni popis.');return}
   if(!confirm(finished?'Spremiti izmjene i uskladiti zalihe?':method==='appFinishSupply'?'Završiti popis i skinuti potvrđenu robu sa skladišta?':'Spremiti popis?'))return;
-  try{const r=await run(method,state.token,d.listId,entries);toast(r.reset?'Promijenjena je količina: sve potvrde su poništene.':finished?'Popis i stanje skladišta ispravljeni.':'Popis spremljen.');await goods('supply')}catch(e){toast(e.message||'Spremanje nije uspjelo.')}
+  try{const r=await run(method,state.token,d.listId,entries);toast(r.reset?'Promijenjena je količina: sve potvrde su poništene.':finished?'Popis i stanje skladišta ispravljeni.':'Popis spremljen.');await openSupplyList(d.listId)}catch(e){toast(e.message||'Spremanje nije uspjelo.')}
  };
  $('saveSupplyDraft').onclick=()=>send('appSaveSupplyList');
  if(!finished)$('finishSupply').onclick=()=>send('appFinishSupply');
