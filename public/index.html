@@ -163,6 +163,7 @@ html[data-theme="light"] .auditDay>summary{background:#f2f6fb;color:#20334e}
 html[data-theme="light"] .auditDayCount{color:#64748b}
 html[data-theme="light"] .auditDay[open]>summary{border-color:#dfe6f0}
 .auditUndoActions{margin-top:11px}.auditUndoActions .undoLatest{border-color:#c96767!important;color:#ffd6d6!important;background:#512a36!important;font-weight:750}.auditUndoActions .undoLatest:disabled{opacity:.55}html[data-theme="light"] .auditUndoActions .undoLatest{color:#8c2525!important;background:#fff1f1!important;border-color:#dd9999!important}
+.securePinBackdrop{position:fixed;inset:0;background:#080e18c9;z-index:200;display:grid;place-items:center;padding:18px}.securePinModal{width:min(100%,400px);padding:22px;border-radius:18px;background:#1c2c43;border:1px solid #4a6280;box-shadow:0 20px 70px #0008;color:#f5f8fd}.securePinModal h3{margin:0 0 8px}.securePinModal p{font-size:13px;line-height:1.5;color:#c4cfe0}.securePinModal input{display:block;width:100%;min-height:48px;padding:12px;background:#101b2d;color:#fff;border:1px solid #667e9b;border-radius:10px;margin:14px 0}.securePinButtons{display:flex;justify-content:flex-end;gap:10px}.securePinButtons button{min-height:44px}html[data-theme="light"] .securePinModal{background:#fff;color:#1c2b40;border-color:#d9e0ea}html[data-theme="light"] .securePinModal p{color:#59687b}html[data-theme="light"] .securePinModal input{background:#f4f7fb;color:#1c2b40;border-color:#a3b4c9}
 </style></head><body><div id="root"></div><div id="toast" class="toast hide"></div><script>
 const THEME_KEY='skladiste-theme';
 function applyTheme(theme){const next=theme==='light'?'light':'dark';document.documentElement.dataset.theme=next;try{localStorage.setItem(THEME_KEY,next)}catch{}document.querySelectorAll('[data-theme-toggle]').forEach(b=>{b.textContent=next==='dark'?'☀':'☾';b.title=next==='dark'?'Svijetla tema':'Tamna tema';b.setAttribute('aria-label',b.title)});document.querySelector('meta[name="theme-color"]')?.setAttribute('content',next==='dark'?'#101621':'#f4f6fa')}
@@ -466,12 +467,21 @@ async function audit(){
  shell('<section class="panel"><div class="panelTop"><h2>Dnevnik aktivnosti</h2><span class="chip">'+rows.length+' zapisa</span></div><p class="hint">Otvori datum za pregled tko je što radio i u koliko sati.</p><input id="auditFilter" class="search" placeholder="Traži konobara ili radnju"><div id="auditRows">'+(rows.length?groups:'<div class="hint">Još nema zabilježenih aktivnosti.</div>')+'</div></section>','Dnevnik aktivnosti');
  document.querySelectorAll('.undoLatest').forEach(button=>button.onclick=async()=>{
   if(!confirm('Poništiti posljednju promjenu? Stanje robe i pripadajući podaci vratit će se na prethodno stanje. Povijest poništavanja ostaje sačuvana.'))return;
-  const pin=prompt('Unesi svoj administratorski PIN za potvrdu poništavanja');
-  if(pin===null)return;
-  if(!pin)return toast('PIN je obvezan.');
-  button.disabled=true;
-  try{await run('appUndoLastAudit',state.token,pin);toast('Posljednja radnja je poništena.');await audit()}
-  catch(e){button.disabled=false;toast(e.message||'Poništavanje nije uspjelo.')}
+  const modal=document.createElement('div');modal.className='securePinBackdrop';
+  modal.innerHTML='<form class="securePinModal"><h3>Potvrda poništavanja</h3><p>Za povrat stanja unesi administratorski PIN.</p><input type="password" name="pin" inputmode="numeric" autocomplete="off" required placeholder="Administratorski PIN"><div class="securePinButtons"><button type="button" class="soft cancelPin">Odustani</button><button type="submit" class="primary confirmPin">Poništi radnju</button></div></form>';
+  document.body.appendChild(modal);
+  const dismiss=()=>modal.remove();
+  modal.querySelector('.cancelPin').onclick=dismiss;
+  modal.onclick=e=>{if(e.target===modal)dismiss()};
+  modal.querySelector('input').focus();
+  modal.querySelector('form').onsubmit=async e=>{
+   e.preventDefault();const pin=modal.querySelector('input').value;
+   if(!pin)return;
+   modal.querySelector('.confirmPin').disabled=true;
+   button.disabled=true;
+   try{await run('appUndoLastAudit',state.token,pin);dismiss();toast('Posljednja radnja je poništena.');await audit()}
+   catch(err){button.disabled=false;modal.querySelector('.confirmPin').disabled=false;toast(err.message||'Poništavanje nije uspjelo.')}
+  };
  });
  $('auditFilter').oninput=()=>{
   const q=$('auditFilter').value.toLocaleLowerCase('hr').trim();
