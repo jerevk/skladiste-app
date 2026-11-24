@@ -96,11 +96,12 @@ async function handle(db,method,args,env){
     q.push(db.prepare("INSERT INTO guard_checks(ok) SELECT changes()"));
     q.push(db.prepare("INSERT INTO movements(id,item_id,movement_type,delta,before_qty,after_qty,actor_id,note) VALUES(?,?,?,?,?,?,?,?)").bind(uid(),c.l.item_id,r.status==="CEKA"?"DONOS":"ISPRAVAK_DONOSA",c.delta,c.l.stock,c.after,u.id,"Popis "+id+" · "+(r.status==="CEKA"?"potvrda":"naknadna izmjena")));
    }
+   if(c.delta===0&&r.status==="ZAVRSENO"&&(c.amount!==c.l.qty||c.decision!==c.l.decision))q.push(db.prepare("INSERT INTO movements(id,item_id,movement_type,delta,before_qty,after_qty,actor_id,note) VALUES(?,?,?,?,?,?,?,?)").bind(uid(),c.l.item_id,"ISPRAVAK_DONOSA",0,c.l.stock,c.l.stock,u.id,"Popis "+id+" · uređena stavka bez promjene stanja"));
    q.push(db.prepare("UPDATE supply_lines SET qty=?,decision=?,stock_after=? WHERE id=? AND qty=? AND decision=?").bind(c.amount,c.decision,c.after,c.l.id,c.l.qty,c.l.decision));
    q.push(db.prepare("INSERT INTO guard_checks(ok) SELECT changes()"));
   }
   if(r.status==="CEKA")q.push(db.prepare("UPDATE supply_requests SET status='ZAVRSENO',confirmed_by=?,confirmed_at=CURRENT_TIMESTAMP WHERE id=? AND status='CEKA'").bind(u.id,id));
-  else q.push(db.prepare("UPDATE supply_requests SET confirmed_by=?,confirmed_at=CURRENT_TIMESTAMP WHERE id=? AND status='ZAVRSENO'").bind(u.id,id));
+  else q.push(db.prepare("UPDATE supply_requests SET note=note WHERE id=? AND status='ZAVRSENO'").bind(id));
   q.push(db.prepare("INSERT INTO guard_checks(ok) SELECT changes()"));
   q.push(db.prepare("DELETE FROM guard_checks"));
   try{await db.batch(q)}catch{bad("Zalihe ili popis su se promijenili. Osvježi i pokušaj ponovno.",409)}
