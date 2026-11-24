@@ -50,6 +50,18 @@ CREATE INDEX IF NOT EXISTS idx_items_category ON items(category,active);
 CREATE INDEX IF NOT EXISTS idx_movements_created ON movements(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_requests_user ON supply_requests(created_by,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_exp ON sessions(expires_at);
+CREATE TABLE IF NOT EXISTS audit_events (
+ id TEXT PRIMARY KEY,
+ user_id TEXT REFERENCES users(id),
+ actor_name TEXT NOT NULL,
+ action TEXT NOT NULL,
+ description TEXT NOT NULL DEFAULT '',
+ device_id TEXT NOT NULL DEFAULT '',
+ device_label TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_user ON audit_events(user_id,created_at DESC);
 
 -- Samostalni početni katalog; sve početne količine su 0, nisu stvarne zalihe.
 INSERT OR IGNORE INTO items(id,category,group_name,name,qty,min_qty,price,capacity) VALUES('seed-pivo-001','pivo','Veliko pivo','Ožujsko',0,5,0,NULL);
