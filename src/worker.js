@@ -14,15 +14,47 @@ async function admin(db,token){const u=await userFromToken(db,token);if(u.role!=
 async function allItems(db,category){const sql="SELECT id,category,group_name,name,qty,min_qty,price,capacity,linked_item_id,version FROM items WHERE active=1"+(category?" AND category=?":"")+" ORDER BY category,group_name,name";return (await db.prepare(sql).bind(...(category?[category]:[])).all()).results}
 async function atomicMutations(db,changes,actor,note,kind){const queries=[];for(const c of changes){const after=Math.round((c.before+c.delta)*1000)/1000;if(after<0)bad(c.name+": nema dovoljno na skladištu.");if(c.capacity!==null&&c.capacity!==undefined&&after>c.capacity)bad(c.name+": količina prelazi kapacitet.");queries.push(db.prepare("UPDATE items SET qty=?,version=version+1 WHERE id=? AND version=? AND active=1").bind(after,c.id,c.version));queries.push(db.prepare("INSERT INTO guard_checks(ok) SELECT changes()"));queries.push(db.prepare("INSERT INTO movements(id,item_id,movement_type,delta,before_qty,after_qty,actor_id,note) VALUES(?,?,?,?,?,?,?,?)").bind(uid(),c.id,kind,c.delta,c.before,after,actor.id,note))}queries.push(db.prepare("DELETE FROM guard_checks"));try{await db.batch(queries)}catch(e){bad("Zalihe su se promijenile tijekom unosa. Osvježi podatke i pokušaj ponovno.",409)}}
 async function getEntries(db,entries){if(!Array.isArray(entries)||!entries.length||entries.length>250)bad("Odaberi između 1 i 250 artikala.");const ids=entries.map(e=>text(e.key,100));if(new Set(ids).size!==ids.length)bad("Artikl se ne može unijeti dvaput.");const found=await Promise.all(ids.map(id=>db.prepare("SELECT * FROM items WHERE id=? AND active=1").bind(id).first()));if(found.some(x=>!x))bad("Jedan od artikala više nije aktivan.");return found}
+
+const auditNames={appLogin:"Prijava",appLogout:"Odjava",appSaveCount:"Inventura / rupe",appSaveIncoming:"Primka robe",appCreateSupply:"Novi popis za donos",appSaveSupplyList:"Uređivanje donosa",appFinishSupply:"Završen donos",appCreateSnapshot:"Kopija stanja",appAdminEditUser:"Uređen konobar",appAdminAddUser:"Dodan konobar",appAdminDeleteUser:"Uklonjen konobar",appAdminAddItem:"Dodan artikl",appAdminRenameItem:"Uređen artikl",appAdminSetFridgeCapacity:"Kapacitet frižidera",appAdminSetItemPrice:"Promjena cijene",appAdminSetMinimum:"Promjena minimuma",appAdminDeleteItem:"Uklonjen artikl"};
+async function auditDetail(db,method,args,result){
+ if(["appSaveCount","appSaveIncoming"].includes(method)){
+  const entries=method==="appSaveCount"?args[2]:args[1];
+  const labels=await Promise.all((Array.isArray(entries)?entries:[]).map(async e=>{
+   const it=await db.prepare("SELECT name,group_name FROM items WHERE id=?").bind(text(e.key,100)).first();
+   return(it?.name||"Artikl")+" = "+text(e.value,30);
+  }));
+  return(method==="appSaveCount"?(args[1]==="fridge"?"Rupe: ":"Inventura "+text(args[1])+": "):"Primka: ")+labels.join("; ");
+ }
+ if(["appCreateSupply","appFinishSupply","appSaveSupplyList"].includes(method))return "Popis "+text(result?.listId||args[1],100)+" · "+(result?.saved||result?.updated||args[2]?.length||0)+" stavki"+(result?.reset?" · poništene potvrde":"");
+ if(method==="appAdminAddUser")return "Ime: "+text(args[1],80);
+ if(method==="appAdminEditUser")return "Korisnik: "+text(args[1])+" · novo ime: "+text(args[2],80)+(args[3]?" · promjena PIN-a":"");
+ if(method==="appAdminAddItem")return text(args[1]?.item)+" / "+text(args[1]?.group);
+ if(method==="appAdminRenameItem")return text(args[3])+" / "+text(args[2])+" ("+text(args[1])+")";
+ if(["appAdminSetFridgeCapacity","appAdminSetItemPrice","appAdminSetMinimum"].includes(method))return "Artikl "+text(args[1])+" · nova vrijednost "+text(args[2]);
+ if(method==="appAdminDeleteItem"||method==="appAdminDeleteUser")return "ID "+text(args[1]);
+ return method==="appLogin"?"Uspješna prijava":method==="appLogout"?"Odjava":text(method);
+}
+async function recordAudit(db,actor,method,args,result,device){
+ if(!auditNames[method])return;
+ const description=await auditDetail(db,method,args,result);
+ await db.prepare("INSERT INTO audit_events(id,user_id,actor_name,action,description,device_id,device_label) VALUES(?,?,?,?,?,?,?)")
+ .bind(uid(),actor?.id||null,actor?.name||"Nepoznato",auditNames[method],text(description,900),text(device?.id,100),text(device?.label,90)).run();
+}
+
 async function handle(db,method,args,env){
  if(method==="appPublicConfig"){const r=await db.prepare("SELECT id,name FROM users WHERE active=1 ORDER BY name").all();return{users:r.results,appName:"Skladište"}}
  if(method==="appSetup"){const [secret,name,pin]=args;if(!env.SETUP_KEY||text(secret,400)!==env.SETUP_KEY)bad("Neispravan ključ za početno postavljanje.",403);if(!/^[0-9]{6,12}$/.test(String(pin)))bad("Administratorski PIN mora imati 6 do 12 znamenki.");const count=await db.prepare("SELECT count(*) AS n FROM users").first();if(count.n)bad("Početna administracija već postoji.");const salt=randomHex();await db.prepare("INSERT INTO users(id,name,role,pin_salt,pin_hash) VALUES(?,?,?,?,?)").bind(uid(),text(name,80)||"Administrator","ADMIN",salt,await pinHash(pin,salt)).run();return{ok:true}}
- if(method==="appLogin"){const [id,pin]=args;const u=await db.prepare("SELECT * FROM users WHERE id=? AND active=1").bind(text(id,100)).first();if(!u)bad("Neispravan korisnik ili PIN.",401);if(u.locked_until>Date.now())bad("Previše pokušaja. Pokušaj ponovno za nekoliko minuta.",429);const h=await pinHash(pin,u.pin_salt);if(h!==u.pin_hash){const attempts=u.failed_attempts+1;await db.prepare("UPDATE users SET failed_attempts=?,locked_until=? WHERE id=?").bind(attempts,attempts>=5?Date.now()+15*60*1000:0,u.id).run();bad("Neispravan korisnik ili PIN.",401)}await db.prepare("UPDATE users SET failed_attempts=0,locked_until=0 WHERE id=?").bind(u.id).run();const token=randomHex(32);await db.prepare("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)").bind(await hashText(token),u.id,Date.now()+6*3600*1000).run();return{token,waiter:{id:u.id,name:u.name,role:u.role}}}
+ if(method==="appLogin"){const [id,pin]=args;const u=await db.prepare("SELECT * FROM users WHERE id=? AND active=1").bind(text(id,100)).first();if(!u)bad("Neispravan korisnik ili PIN.",401);if(u.locked_until>Date.now())bad("Previše pokušaja. Pokušaj ponovno za nekoliko minuta.",429);const h=await pinHash(pin,u.pin_salt);if(h!==u.pin_hash){const attempts=u.failed_attempts+1;await db.prepare("UPDATE users SET failed_attempts=?,locked_until=? WHERE id=?").bind(attempts,attempts>=5?Date.now()+15*60*1000:0,u.id).run();bad("Neispravan korisnik ili PIN.",401)}await db.prepare("UPDATE users SET failed_attempts=0,locked_until=0 WHERE id=?").bind(u.id).run();const token=randomHex(32);await db.prepare("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)").bind(await hashText(token),u.id,Date.now()+(args[2]===false?6*3600*1000:30*24*3600*1000)).run();return{token,waiter:{id:u.id,name:u.name,role:u.role}}}
  if(method==="appLogout"){await db.prepare("DELETE FROM sessions WHERE token_hash=?").bind(await hashText(args[0])).run();return true}
  const token=args[0],u=await userFromToken(db,token);
  const waiterAllowed=new Set(["appBootstrap","appGetCatalog","appGetCount","appSaveCount","appSaveIncoming","appCreateSupply","appRecentSupply","appGetSupplyList","appGetSupplyAudit","appSaveSupplyList","appFinishSupply","appRecentIncoming"]);
  if(u.role!=="ADMIN"&&!waiterAllowed.has(method))bad("Ova funkcija dostupna je samo administratoru.",403);
  if(u.role!=="ADMIN"&&(method==="appGetCount"||method==="appSaveCount")&&text(args[1])!=="fridge")bad("Konobar može uređivati samo rupe u frižideru.",403);
+ if(method==="appGetAudit"){
+ await admin(db,token);
+ const limit=Math.min(300,Math.max(1,Number(args[1])||150));
+ return(await db.prepare("SELECT actor_name AS actor,action,description,device_label AS device,created_at AS createdAt FROM audit_events ORDER BY created_at DESC,rowid DESC LIMIT ?").bind(limit).all()).results;
+ }
  if(method==="appBootstrap")return{waiter:{id:u.id,name:u.name,role:u.role},spreadsheet:"Cloudflare D1"};
  if(method==="appGetCatalog"){const items=await allItems(db);return{sections:modes.filter(m=>m!=="fridge").map(category=>({key:category,title:({pivo:"Pivo",pica:"Pića",zesta:"Žesta",toplo:"Topli napitci"})[category],items:items.filter(i=>i.category===category).map(i=>({key:i.id,mode:i.category,section_name:i.category,group_name:i.group_name,item_name:i.name,current_qty:i.qty,unit_price:i.price,min_qty:i.min_qty}))})),updatedAt:timestamp()}}
  if(method==="appGetCount"){const category=text(args[1]);if(!modes.includes(category))bad("Nepoznata kategorija.");const items=await allItems(db,category);return{sheetName:category,updatedAt:timestamp(),rows:items.map(i=>({item_location_id:i.id,group_name:i.group_name,item_name:i.name,count_mode:category==="fridge"?"holes":"quantity",full_capacity:category==="fridge"?i.capacity:null,current_qty:category==="fridge"?Math.max(0,(i.capacity||0)-i.qty):i.qty,unit_price:i.price}))}}
@@ -129,4 +161,12 @@ async function handle(db,method,args,env){
  if(method==="appAdminDeleteItem"){await admin(db,token);await db.prepare("UPDATE items SET active=0 WHERE id=?").bind(text(args[1])).run();return handle(db,"appAdminGetData",[token],env)}
  bad("Nepoznata radnja.",404)
 }
-export default {async fetch(request,env){try{const url=new URL(request.url);if(url.pathname==="/api/health")return send({ok:true,storage:"Cloudflare D1"});if(url.pathname.startsWith("/api/")){if(request.method!=="POST")return send({error:"POST required"},405);if(!env.DB)return send({error:"D1 baza nije povezana."},503);if(Number(request.headers.get("content-length")||0)>100000)return send({error:"Prevelik zahtjev."},413);const body=await request.json();const method=url.pathname.slice(5);return send(await handle(env.DB,method,Array.isArray(body.args)?body.args:[],env))}return env.ASSETS.fetch(request)}catch(e){return send({error:e.message||"Došlo je do pogreške."},e.status||500)}}};
+export default {async fetch(request,env){try{const url=new URL(request.url);if(url.pathname==="/api/health")return send({ok:true,storage:"Cloudflare D1"});if(url.pathname.startsWith("/api/")){if(request.method!=="POST")return send({error:"POST required"},405);if(!env.DB)return send({error:"D1 baza nije povezana."},503);if(Number(request.headers.get("content-length")||0)>100000)return send({error:"Prevelik zahtjev."},413);const body=await request.json();const method=url.pathname.slice(5),args=Array.isArray(body.args)?body.args:[];
+const device={id:text(body.device?.id,100),label:text(body.device?.label,90)};
+const actorBefore=method==="appLogout"?await userFromToken(env.DB,args[0]):null;
+const result=await handle(env.DB,method,args,env);
+if(auditNames[method]){
+ try{const actor=method==="appLogin"?await userFromToken(env.DB,result.token):actorBefore||await userFromToken(env.DB,args[0]);
+ await recordAudit(env.DB,actor,method,args,result,device)}catch(e){console.error("Neuspješan upis loga",e)}
+}
+return send(result)}return env.ASSETS.fetch(request)}catch(e){return send({error:e.message||"Došlo je do pogreške."},e.status||500)}}};
