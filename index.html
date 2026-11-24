@@ -185,7 +185,7 @@ async function call(fn,...args){if(demo)return mock(fn,...args);const r=await fe
 function mock(fn,...args){if(fn==='appPublicConfig')return{users:[{id:'demo',name:'Demo korisnik'}]};if(fn==='appLogin')return{token:'demo',waiter:{id:'demo',name:'Demo korisnik',role:'ADMIN'}};if(fn==='appBootstrap')return{waiter:state.user};if(fn==='appGetCount'){const m=args[1];return{rows:(DEMO_ITEMS[m]||[]).map(([name,qty],i)=>({item_location_id:String(i),group_name:m==='fridge'?'Hladnjak':m.toUpperCase(),item_name:name,current_qty:qty,count_mode:m==='fridge'?'holes':'quantity',full_capacity:m==='fridge'?24:null}))}}if(fn==='appGetCatalog')return{sections:MODES.slice(0,4).map(([k,v])=>({key:k,title:v,items:(DEMO_ITEMS[k]||[]).map(([n,q],i)=>({key:k+':'+i,mode:k,group_name:v,item_name:n,current_qty:q}))}))};if(fn==='appGetTotalState')return{values:[['Artikl','Količina'],...Object.values(DEMO_ITEMS).flat().map(a=>a)]};if(fn==='appGetBackups')return{backups:[],comparison:null};if(fn==='appRecentIncoming'||fn==='appRecentSupply')return[];if(fn==='appAdminGetData')return{users:[{id:'demo',name:'Demo korisnik',role:'ADMIN',active:true}],items:[]};if(fn==='appSaveCount'){const m=args[1],entries=args[2];entries.forEach(e=>{let row=DEMO_ITEMS[m]?.[Number(e.key)];if(row)row[1]=Number(e.value)});return{saved:entries.length}}if(fn==='appSaveIncoming'||fn==='appCreateSupply')return{saved:args[1].length};if(fn==='appAdminAddUser'||fn==='appAdminDeleteUser'||fn==='appAdminAddItem'||fn==='appAdminDeleteItem')return mock('appAdminGetData');return true}
 async function run(fn,...args){try{state.busy=true;const res=await call(fn,...args);return res}catch(err){toast('Greška: '+err.message);throw err}finally{state.busy=false}}
 function shell(content,title,overline='SKLADIŠNA EVIDENCIJA'){
-const isAdmin=state.user?.role==='ADMIN';const nav=SECTIONS.filter(([id])=>isAdmin||['home','count','supply','incoming'].includes(id));
+const isAdmin=state.user?.role==='ADMIN';const nav=SECTIONS.filter(([id])=>isAdmin||['home','count','supply','incoming','audit'].includes(id));
 const links=nav.map(([id,label])=>'<button class="'+(id===state.page?'sel':'')+'" data-page="'+id+'">'+x(label)+'</button>').join('');
 $('root').innerHTML='<div class="app"><header class="scriptTop"><div class="scriptBrand"><button class="hamb" id="menuOpen" aria-label="Otvori izbornik">☰</button><div><strong>Skladište</strong><small>Ukupno · Donos robe · Primka robe · Inventura</small></div></div><button type="button" class="themeToggle" data-theme-toggle aria-label="Promijeni temu">☀</button><span class="scriptConnected">'+(demo?'DEMO':'● Povezano')+'</span></header><div class="drawerBack" id="drawerBack"></div><aside class="scriptDrawer" id="scriptDrawer"><div class="drawerHeader"><b>Skladište</b><button id="menuClose" aria-label="Zatvori izbornik">×</button></div>'+links+'<div class="drawerUser">Prijavljen: <b>'+x(state.user?.name)+'</b><p><button class="soft" id="logout">Odjava</button></p></div></aside><main class="content"><div class="scriptHead"><div><h1>'+x(title)+'</h1><div class="sub">'+x(overline)+'</div></div></div>'+content+'</main></div>';
 bindThemeToggles();const close=()=>{$('scriptDrawer').classList.remove('on');$('drawerBack').classList.remove('on');$('menuOpen')?.setAttribute('aria-expanded','false')};
@@ -454,7 +454,7 @@ function adminGroupOptions(mode,selected=''){
  return options.map(([value,label])=>'<option value="'+x(value)+'"'+(value===selected?' selected':'')+'>'+x(label)+'</option>').join('');
 }
 async function audit(){
- if(state.user?.role!=='ADMIN')return openPage('home');
+ if(!state.user)return openPage('home');
  const rows=await run('appGetAudit',state.token,300);
  const dateOf=d=>{const date=new Date(String(d).replace(' ','T')+'Z');return Number.isNaN(date.getTime())?null:date};
  const localDate=d=>{const date=dateOf(d);return date?new Intl.DateTimeFormat('hr-HR',{timeZone:'Europe/Zagreb',year:'numeric',month:'2-digit',day:'2-digit'}).format(date):String(d).slice(0,10)};
@@ -468,7 +468,7 @@ async function audit(){
  document.querySelectorAll('.undoLatest').forEach(button=>button.onclick=async()=>{
   if(!confirm('Poništiti posljednju promjenu? Stanje robe i pripadajući podaci vratit će se na prethodno stanje. Povijest poništavanja ostaje sačuvana.'))return;
   const modal=document.createElement('div');modal.className='securePinBackdrop';
-  modal.innerHTML='<form class="securePinModal"><h3>Potvrda poništavanja</h3><p>Za povrat stanja unesi administratorski PIN.</p><input type="password" name="pin" inputmode="numeric" autocomplete="off" required placeholder="Administratorski PIN"><div class="securePinButtons"><button type="button" class="soft cancelPin">Odustani</button><button type="submit" class="primary confirmPin">Poništi radnju</button></div></form>';
+  modal.innerHTML='<form class="securePinModal"><h3>Potvrda poništavanja</h3><p>Za povrat stanja unesi PIN osobe koja je napravila ovu radnju.</p><input type="password" name="pin" inputmode="numeric" autocomplete="off" required placeholder="PIN konobara"><div class="securePinButtons"><button type="button" class="soft cancelPin">Odustani</button><button type="submit" class="primary confirmPin">Poništi radnju</button></div></form>';
   document.body.appendChild(modal);
   const dismiss=()=>modal.remove();
   modal.querySelector('.cancelPin').onclick=dismiss;
