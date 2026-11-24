@@ -20,7 +20,7 @@ async function handle(db,method,args,env){
  if(method==="appLogin"){const [id,pin]=args;const u=await db.prepare("SELECT * FROM users WHERE id=? AND active=1").bind(text(id,100)).first();if(!u)bad("Neispravan korisnik ili PIN.",401);if(u.locked_until>Date.now())bad("Previše pokušaja. Pokušaj ponovno za nekoliko minuta.",429);const h=await pinHash(pin,u.pin_salt);if(h!==u.pin_hash){const attempts=u.failed_attempts+1;await db.prepare("UPDATE users SET failed_attempts=?,locked_until=? WHERE id=?").bind(attempts,attempts>=5?Date.now()+15*60*1000:0,u.id).run();bad("Neispravan korisnik ili PIN.",401)}await db.prepare("UPDATE users SET failed_attempts=0,locked_until=0 WHERE id=?").bind(u.id).run();const token=randomHex(32);await db.prepare("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)").bind(await hashText(token),u.id,Date.now()+6*3600*1000).run();return{token,waiter:{id:u.id,name:u.name,role:u.role}}}
  if(method==="appLogout"){await db.prepare("DELETE FROM sessions WHERE token_hash=?").bind(await hashText(args[0])).run();return true}
  const token=args[0],u=await userFromToken(db,token);
- const waiterAllowed=new Set(["appBootstrap","appGetCatalog","appGetCount","appSaveCount","appSaveIncoming","appCreateSupply","appRecentSupply","appGetSupplyList","appSaveSupplyList","appFinishSupply","appRecentIncoming"]);
+ const waiterAllowed=new Set(["appBootstrap","appGetCatalog","appGetCount","appSaveCount","appSaveIncoming","appCreateSupply","appRecentSupply","appGetSupplyList","appGetSupplyAudit","appSaveSupplyList","appFinishSupply","appRecentIncoming"]);
  if(u.role!=="ADMIN"&&!waiterAllowed.has(method))bad("Ova funkcija dostupna je samo administratoru.",403);
  if(u.role!=="ADMIN"&&(method==="appGetCount"||method==="appSaveCount")&&text(args[1])!=="fridge")bad("Konobar može uređivati samo rupe u frižideru.",403);
  if(method==="appBootstrap")return{waiter:{id:u.id,name:u.name,role:u.role},spreadsheet:"Cloudflare D1"};
@@ -44,6 +44,13 @@ async function handle(db,method,args,env){
   if(!r)bad("Popis nije pronađen.",404);
   const lines=await db.prepare("SELECT l.id AS lineId,l.item_id AS key,l.qty,l.decision,l.stock_before AS stock,l.stock_after AS stockAfter,i.name AS item,i.group_name AS 'group',i.category AS section FROM supply_lines l JOIN items i ON i.id=l.item_id WHERE l.request_id=? ORDER BY i.category,i.group_name,i.name").bind(id).all();
   return{listId:r.id,status:r.status,createdAt:r.created_at,completedAt:r.confirmed_at,waiter:r.waiter,confirmedBy:r.confirmedByName,note:r.note,items:lines.results};
+ }
+ if(method==="appGetSupplyAudit"){
+  const id=text(args[1]);
+  const allowed=await db.prepare("SELECT id FROM supply_requests WHERE id=? AND (created_by=? OR ?='ADMIN')").bind(id,u.id,u.role).first();
+  if(!allowed)bad("Popis nije pronađen.",404);
+  const results=await db.prepare("SELECT m.created_at AS createdAt,m.movement_type AS type,m.delta,m.before_qty AS beforeQty,m.after_qty AS afterQty,m.note,u.name AS actor,i.name AS item FROM movements m JOIN users u ON u.id=m.actor_id JOIN items i ON i.id=m.item_id WHERE m.note LIKE ? AND m.movement_type IN ('DONOS','ISPRAVAK_DONOSA') ORDER BY m.created_at DESC LIMIT 150").bind("Popis "+id+"%").all();
+  return results.results;
  }
  if(method==="appSaveSupplyList"||method==="appFinishSupply"){
   const id=text(args[1]),input=args[2],r=await db.prepare("SELECT * FROM supply_requests WHERE id=? AND (created_by=? OR ?='ADMIN')").bind(id,u.id,u.role).first();
