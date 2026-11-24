@@ -268,6 +268,22 @@ html[data-theme="light"] .originalHomeIntro{background:linear-gradient(135deg,#f
  .formGrid{gap:11px}
 }
 @media(prefers-reduced-motion:reduce){.originalHomeAction,input,select,textarea{transition:none!important}.scriptDrawer{transition:none!important}}
+
+.compareDateRow{display:grid;grid-template-columns:minmax(0,1fr) 22px minmax(0,1fr);gap:12px;align-items:end;margin:17px 0}
+.compareDateRow .field{font-size:12px;min-width:0}
+.compareDateRow select{min-height:48px;font-size:14px;font-weight:750}
+.compareDateArrow{text-align:center;padding-bottom:13px;color:#89a3bd;font-size:20px}
+.compareSummary{display:flex;align-items:center;justify-content:space-between;gap:14px;border-radius:13px;padding:15px 16px;background:#26384c;border:1px solid #43566c;margin-bottom:16px}
+.compareSummary strong{font-weight:800;font-size:16px}
+.compareSummary span{font-size:12px;color:#b4c6dc}
+.compareControls{display:flex;align-items:center;gap:15px;flex-wrap:wrap;margin-bottom:13px}
+.compareControls .search{margin:0;flex:1 1 210px}
+.compareToggle{display:flex;align-items:center;gap:9px;font-size:12px;font-weight:650;cursor:pointer;line-height:1.4}
+.compareToggle input{width:18px;height:18px;min-height:18px;flex:none}
+#backupGroups .backupLine[hidden],#backupGroups details[hidden]{display:none!important}
+html[data-theme="light"] .compareSummary{background:#f1f6fb;border-color:#dce5ee}
+html[data-theme="light"] .compareSummary span{color:#6b7c92}
+@media(max-width:520px){.compareDateRow{gap:7px;grid-template-columns:minmax(0,1fr) 16px minmax(0,1fr)}.compareDateRow select{font-size:12px;padding:9px 5px}.compareSummary{display:grid;gap:5px}.compareSummary span{font-size:11px}.compareControls{align-items:flex-start}}
 </style></head><body><div id="root"></div><div id="toast" class="toast hide"></div><script>
 const THEME_KEY='skladiste-theme';
 function applyTheme(theme){const next=theme==='light'?'light':'dark';document.documentElement.dataset.theme=next;try{localStorage.setItem(THEME_KEY,next)}catch{}document.querySelectorAll('[data-theme-toggle]').forEach(b=>{b.textContent=next==='dark'?'☀':'☾';b.title=next==='dark'?'Svijetla tema':'Tamna tema';b.setAttribute('aria-label',b.title)});document.querySelector('meta[name="theme-color"]')?.setAttribute('content',next==='dark'?'#101621':'#f4f6fa')}
@@ -538,12 +554,35 @@ async function total(){
  $('copyTotal').onclick=async()=>{const value=sheetRows.slice(0,14).map(r=>format(r[1])).join('\n');try{await navigator.clipboard.writeText(value)}catch(e){const ta=document.createElement('textarea');ta.value=value;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}toast('Kopirano B1:B14.')};
  $('exportTotal').onclick=()=>exportCSV(sheetRows,['A','B','C','D','E']);
 }
-async function backups(){
-const result=await run('appGetBackups',state.token),comparison=result.comparison;
-const sections=(comparison?.sections||[]).map(sec=>({...sec,title:MODES.find(m=>m[0]===sec.key)?.[1]||sec.title,items:(sec.items||[]).map(i=>({...i,group_name:i.group_name||'Ostalo'}))}));
-shell('<section class="panel"><div class="panelTop"><h2>Usporedba stanja</h2><div class="tools"><span class="chip">'+x(comparison?.date||'Nema kopije')+'</span>'+(state.user.role==='ADMIN'?'<button id="snapshotNow" class="primary">Spremi kopiju stanja</button>':'')+'</div></div>'+(sections.length?'<input id="backupSearch" class="search" placeholder="Traži artikl ili grupu"><div id="backupGroups">'+groupedCatalogHTML(sections,(i,sec)=>'<div class="line backupLine" data-name="'+x((i.item_name+' '+i.group_name+' '+sec.title).toLocaleLowerCase('hr'))+'"><div><strong>'+x(i.item_name)+'</strong><div class="sub">Prije '+x(i.previous_qty??'—')+' · sada '+x(i.current_qty??'—')+'</div></div><b class="'+(i.diff<0?'negative':'positive')+'">'+(i.diff==null?'—':(i.diff>0?'+':'')+i.diff)+'</b></div>')+'</div>':'<div class="empty">Nema prethodne kopije za usporedbu.</div>')+'</section>','Usporedba stanja');
-if($('backupSearch'))$('backupSearch').oninput=()=>filterGroupedRows('backupSearch','backupLine');
-if($('snapshotNow'))$('snapshotNow').onclick=async()=>{if(!confirm('Spremiti trenutno stanje svih artikala?'))return;try{await run('appCreateSnapshot',state.token);toast('Kopija stanja spremljena.');backups()}catch(e){toast(e.message||'Spremanje nije uspjelo.')}};
+async function backups(fromDate='',toDate=''){
+ const result=await run('appGetBackups',state.token,...(fromDate&&toDate?[fromDate,toDate]:[]));
+ const comparison=result.comparison;
+ const days=[];
+ if(result.availableFrom&&result.today){
+  const first=Date.parse(result.availableFrom+'T12:00:00Z'),last=Date.parse(result.today+'T12:00:00Z');
+  for(let t=last;t>=first&&days.length<3652;t-=86400000)days.push(new Date(t).toISOString().slice(0,10));
+ }
+ const formatDate=d=>d?d.split('-').reverse().join('.'):'—';
+ const options=(selected)=>days.map(day=>'<option value="'+day+'"'+(day===selected?' selected':'')+'>'+formatDate(day)+'</option>').join('');
+ const sections=(comparison?.sections||[]).map(sec=>({...sec,title:MODES.find(m=>m[0]===sec.key)?.[1]||sec.title,items:(sec.items||[]).map(i=>({...i,group_name:i.group_name||'Ostalo'}))}));
+ const diffCount=sections.reduce((sum,s)=>sum+s.items.filter(i=>i.diff!==null&&i.diff!==0).length,0);
+ const hasData=!!comparison;
+ shell('<section class="panel"><div class="panelTop"><h2>Usporedba po datumima</h2><span class="chip">Automatska evidencija</span></div><p class="hint">Odaberi dva datuma. Prikazano je stanje na kraju odabranog dana, a za današnji datum trenutno stanje. Ako tog dana nije bilo promjena, vrijedi prethodno stanje.</p>'
+ +(days.length?'<div class="compareDateRow"><label class="field">Od datuma<select id="compareFrom">'+options(comparison?.from||days[days.length-1])+'</select></label><span class="compareDateArrow" aria-hidden="true">→</span><label class="field">Do datuma<select id="compareTo">'+options(comparison?.to||days[0])+'</select></label></div>':'')
+ +(hasData?'<div class="compareSummary"><strong>'+diffCount+' '+(diffCount===1?'promijenjen artikl':'promijenjenih artikala')+'</strong><span>Između '+formatDate(comparison.from)+' i '+formatDate(comparison.to)+'</span></div>':'<div class="empty">Dnevna evidencija još nije dostupna.</div>')
+ +(hasData?'<div class="compareControls"><input id="backupSearch" class="search" placeholder="Traži artikl ili grupu"><label class="compareToggle"><input id="compareShowAll" type="checkbox"> Prikaži i nepromijenjene artikle</label></div><div id="backupGroups">'+groupedCatalogHTML(sections,(i,sec)=>'<div class="line backupLine" data-name="'+x((i.item_name+' '+i.group_name+' '+sec.title).toLocaleLowerCase('hr'))+'" data-changed="'+(i.diff!==null&&i.diff!==0?'1':'0')+'"><div><strong>'+x(i.item_name)+'</strong><div class="sub">Prije '+x(i.previous_qty??'—')+' · poslije '+x(i.current_qty??'—')+'</div></div><b class="'+(i.diff<0?'negative':i.diff>0?'positive':'')+'">'+(i.diff==null?'—':(i.diff>0?'+':'')+i.diff)+'</b></div>')+'</div>':'')+'</section>','Usporedba stanja');
+ const refresh=()=>{const a=$('compareFrom')?.value,b=$('compareTo')?.value;if(!a||!b)return;if(a>b){toast('Početni datum mora biti prije završnog.');return}backups(a,b)};
+ if($('compareFrom'))$('compareFrom').onchange=refresh;
+ if($('compareTo'))$('compareTo').onchange=refresh;
+ const applyFilters=()=>{
+  const query=($('backupSearch')?.value||'').toLocaleLowerCase('hr').trim();
+  const all=$('compareShowAll')?.checked||false;
+  document.querySelectorAll('.backupLine').forEach(row=>{row.hidden=(!all&&row.dataset.changed!=='1')||!row.dataset.name.includes(query)});
+  document.querySelectorAll('#backupGroups details').forEach(group=>{if(group.querySelector('.backupLine')){group.hidden=!group.querySelector('.backupLine:not([hidden])');if(query&&group.querySelector('.backupLine:not([hidden])'))group.open=true}});
+ };
+ if($('backupSearch'))$('backupSearch').oninput=applyFilters;
+ if($('compareShowAll'))$('compareShowAll').onchange=applyFilters;
+ if(hasData)applyFilters();
 }
 const ADMIN_GROUPS={
  pivo:[['Veliko pivo','PIVO / Veliko pivo'],['Malo pivo','MALO PIVO'],['Ostala piva','Ostala piva'],['Tomislav + Radler','TOMISLAV + RADLER']],
