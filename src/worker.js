@@ -134,6 +134,25 @@ async function revertLastAudit(db,actor,pin,device){
  return{ok:true,action:last.action};
 }
 
+
+function businessDay(date=new Date()){return new Intl.DateTimeFormat("sv-SE",{timeZone:"Europe/Zagreb",year:"numeric",month:"2-digit",day:"2-digit"}).format(date)}
+const stockChangingMethods=new Set(["appSaveCount","appSaveIncoming","appFinishSupply","appUndoLastAudit","appAdminAddItem","appAdminDeleteItem","appAdminSetFridgeCapacity","appAdminRenameItem","appAdminSetMinimum","appAdminSetItemPrice"]);
+async function persistDailyStock(db){
+ const d=businessDay();
+ const r=await db.prepare("SELECT id,qty FROM items WHERE active=1 ORDER BY id").all();
+ const payload=JSON.stringify(Object.fromEntries(r.results.map(i=>[i.id,i.qty])));
+ await db.prepare("INSERT INTO daily_stock_state(business_date,payload,updated_at) VALUES(?,?,CURRENT_TIMESTAMP) ON CONFLICT(business_date) DO UPDATE SET payload=excluded.payload,updated_at=CURRENT_TIMESTAMP").bind(d,payload).run();
+}
+async function historicStock(db,date){
+ const day=businessDay();
+ if(date===day){const items=await allItems(db);return Object.fromEntries(items.map(i=>[i.id,i.qty]))}
+ const r=await db.prepare("SELECT payload FROM daily_stock_state WHERE business_date<=? ORDER BY business_date DESC LIMIT 1").bind(date).first();
+ if(!r)return null;
+ const saved=JSON.parse(r.payload);
+ return Array.isArray(saved)?Object.fromEntries(saved.map(i=>[i.id,i.qty])):saved;
+}
+function validDate(s){return /^\d{4}-\d{2}-\d{2}$/.test(s)&&!Number.isNaN(Date.parse(s))&&new Date(s).toISOString().slice(0,10)===s}
+
 async function handle(db,method,args,env){
  if(method==="appPublicConfig"){const r=await db.prepare("SELECT id,name FROM users WHERE active=1 ORDER BY name").all();return{users:r.results,appName:"Skladište"}}
  if(method==="appSetup"){const [secret,name,pin]=args;if(!env.SETUP_KEY||text(secret,400)!==env.SETUP_KEY)bad("Neispravan ključ za početno postavljanje.",403);if(!/^[0-9]{6,12}$/.test(String(pin)))bad("Administratorski PIN mora imati 6 do 12 znamenki.");const count=await db.prepare("SELECT count(*) AS n FROM users").first();if(count.n)bad("Početna administracija već postoji.");const salt=randomHex();await db.prepare("INSERT INTO users(id,name,role,pin_salt,pin_hash) VALUES(?,?,?,?,?)").bind(uid(),text(name,80)||"Administrator","ADMIN",salt,await pinHash(pin,salt)).run();return{ok:true}}
@@ -240,7 +259,24 @@ async function handle(db,method,args,env){
  const mapped=items.map(i=>({key:i.id,mode:i.category,group_name:i.group_name,item_name:i.name,current_qty:i.qty,unit_price:i.price,linked_item_id:i.linked_item_id,full_capacity:i.capacity,holes:i.category==="fridge"?Math.max(0,(i.capacity||0)-i.qty):null}));
  return{title:"Ukupno stanje",items:mapped,values:[["Kategorija","Grupa","Artikl","Količina","Cijena"],...mapped.map(i=>[i.mode,i.group_name,i.item_name,i.current_qty,i.unit_price])],copyValues:mapped.map(i=>i.current_qty)};
  }
- if(method==="appGetBackups"){const items=await allItems(db);const last=await db.prepare("SELECT * FROM snapshots ORDER BY created_at DESC LIMIT 1").first();let comparison=null;if(last){const rows=(await db.prepare("SELECT item_id,qty FROM snapshot_lines WHERE snapshot_id=?").bind(last.id).all()).results;const prev=new Map(rows.map(r=>[r.item_id,r.qty]));comparison={date:last.created_at,sections:modes.map(m=>({key:m,title:m,items:items.filter(it=>it.category===m).map(it=>({key:it.id,group_name:it.group_name,item_name:it.name,previous_qty:prev.get(it.id)??null,current_qty:it.qty,diff:prev.has(it.id)?it.qty-prev.get(it.id):null}))}))}}return{backups:last?[{date:last.created_at}]:[],comparison}}
+ if(method==="appGetBackups"){
+  await admin(db,token);
+  const earliest=await db.prepare("SELECT MIN(business_date) AS d FROM daily_stock_state").first();
+  if(!earliest?.d)return{comparison:null,availableFrom:null,today:businessDay()};
+  const today=businessDay();
+  const from=text(args[1]||earliest.d,20),to=text(args[2]||today,20);
+  if(!validDate(from)||!validDate(to)||from<earliest.d||to>today||from>to)bad("Odaberi valjan raspon datuma.",400);
+  const [previous,current,items]=await Promise.all([historicStock(db,from),historicStock(db,to),allItems(db)]);
+  const round=n=>Math.round(n*1000)/1000;
+  return{availableFrom:earliest.d,today,comparison:{from,to,sections:modes.map(m=>({
+   key:m,title:({pivo:"Pivo",pica:"Pića",zesta:"Žesta",toplo:"Topli napitci",fridge:"Frižider"})[m],
+   items:items.filter(i=>i.category===m).map(i=>{
+    const prior=previous&&Object.hasOwn(previous,i.id)?previous[i.id]:null;
+    const after=current&&Object.hasOwn(current,i.id)?current[i.id]:null;
+    return{key:i.id,group_name:i.group_name,item_name:i.name,previous_qty:prior,current_qty:after,diff:prior===null||after===null?null:round(after-prior)}
+   })
+  }))}}
+ }
  if(method==="appCreateSnapshot"){await admin(db,token);const items=await allItems(db),id=uid();await db.batch([db.prepare("INSERT INTO snapshots(id,created_by) VALUES(?,?)").bind(id,u.id),...items.map(it=>db.prepare("INSERT INTO snapshot_lines(snapshot_id,item_id,qty) VALUES(?,?,?)").bind(id,it.id,it.qty))]);return{ok:true}}
  if(method==="appRecentIncoming"){return(await db.prepare("SELECT m.created_at AS createdAt,m.movement_type AS type,i.name AS item,m.delta AS qty FROM movements m JOIN items i ON i.id=m.item_id WHERE m.actor_id=? AND m.movement_type='PRIMKA' ORDER BY m.created_at DESC LIMIT 30").bind(u.id).all()).results}
  if(method==="appAdminGetData"){await admin(db,token);const users=(await db.prepare("SELECT id,name,role,active FROM users ORDER BY name").all()).results;const items=await allItems(db);return{admin:{id:u.id,name:u.name},users:users.map(x=>({...x,active:!!x.active})),items:items.map(it=>({key:it.id,type:it.category==="fridge"?"FRIDGE":"STOCK",mode:it.category,group:it.group_name,item:it.name,price:it.price,capacity:it.capacity,minQty:it.min_qty}))}}
@@ -272,4 +308,5 @@ if(auditNames[method]){
   ]);
  }else await recordAudit(env.DB,actor,method,args,result,device)}catch(e){console.error("Neuspješan upis loga",e)}
 }
+if(stockChangingMethods.has(method)){try{await persistDailyStock(env.DB)}catch(e){console.error("Dnevna evidencija nije spremljena",e)}}
 return send(result)}return env.ASSETS.fetch(request)}catch(e){return send({error:e.message||"Došlo je do pogreške."},e.status||500)}}};
