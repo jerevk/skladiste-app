@@ -201,6 +201,7 @@ async function handle(db,method,args,env){
   const id=text(args[1]),input=args[2],r=await db.prepare("SELECT * FROM supply_requests WHERE id=? AND (created_by=? OR ?='ADMIN')").bind(id,u.id,u.role).first();
   if(!r)bad("Popis nije pronađen.",404);
   if(!["CEKA","ZAVRSENO"].includes(r.status))bad("Nepoznat status popisa.");
+  if(r.status==="ZAVRSENO"&&u.role!=="ADMIN")bad("Završeni popis može ispravljati samo administrator.",403);
   const final=method==="appFinishSupply";
   if(final&&r.status!=="CEKA")bad("Popis je već dovršen.");
   if(!Array.isArray(input)||!input.length||input.length>250)bad("Popis nema ispravne stavke.");
