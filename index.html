@@ -162,6 +162,7 @@ html[data-theme="light"] .auditDay{border-color:#dfe6f0}
 html[data-theme="light"] .auditDay>summary{background:#f2f6fb;color:#20334e}
 html[data-theme="light"] .auditDayCount{color:#64748b}
 html[data-theme="light"] .auditDay[open]>summary{border-color:#dfe6f0}
+.auditUndoActions{margin-top:11px}.auditUndoActions .undoLatest{border-color:#c96767!important;color:#ffd6d6!important;background:#512a36!important;font-weight:750}.auditUndoActions .undoLatest:disabled{opacity:.55}html[data-theme="light"] .auditUndoActions .undoLatest{color:#8c2525!important;background:#fff1f1!important;border-color:#dd9999!important}
 </style></head><body><div id="root"></div><div id="toast" class="toast hide"></div><script>
 const THEME_KEY='skladiste-theme';
 function applyTheme(theme){const next=theme==='light'?'light':'dark';document.documentElement.dataset.theme=next;try{localStorage.setItem(THEME_KEY,next)}catch{}document.querySelectorAll('[data-theme-toggle]').forEach(b=>{b.textContent=next==='dark'?'☀':'☾';b.title=next==='dark'?'Svijetla tema':'Tamna tema';b.setAttribute('aria-label',b.title)});document.querySelector('meta[name="theme-color"]')?.setAttribute('content',next==='dark'?'#101621':'#f4f6fa')}
@@ -459,9 +460,19 @@ async function audit(){
  const localTime=d=>{const date=dateOf(d);return date?new Intl.DateTimeFormat('hr-HR',{timeZone:'Europe/Zagreb',hour:'2-digit',minute:'2-digit'}).format(date):String(d).slice(11,16)};
  const days=new Map();
  rows.forEach(r=>{const key=localDate(r.createdAt);if(!days.has(key))days.set(key,[]);days.get(key).push(r)});
- const entryHTML=r=>'<div class="auditEntry" data-name="'+x((r.actor+' '+r.action+' '+r.description+' '+r.device).toLocaleLowerCase('hr'))+'"><div class="auditEntryTop"><strong>'+x(r.actor)+'</strong><span>'+x(localTime(r.createdAt))+'</span></div><div class="auditAction">'+x(r.action)+'</div><p>'+x(r.description)+'</p><small>'+x(r.device||'Nepoznat uređaj')+'</small></div>';
+ const latestChange=rows.find(r=>!['Prijava','Odjava','Poništena radnja'].includes(r.action));
+ const entryHTML=r=>'<div class="auditEntry" data-name="'+x((r.actor+' '+r.action+' '+r.description+' '+r.device).toLocaleLowerCase('hr'))+'"><div class="auditEntryTop"><strong>'+x(r.actor)+'</strong><span>'+x(localTime(r.createdAt))+'</span></div><div class="auditAction">'+x(r.action)+(r.undone?' · PONIŠTENO':'')+'</div><p>'+x(r.description)+'</p><small>'+x(r.device||'Nepoznat uređaj')+'</small>'+(r.id===latestChange?.id&&r.reversible&&!r.undone?'<div class="auditUndoActions"><button class="soft undoLatest" type="button">Poništi ovu promjenu</button></div>':'')+'</div>';
  const groups=[...days].map(([date,items])=>'<details class="auditDay"><summary><span>'+x(date)+'</span><span class="auditDayCount">'+items.length+' '+(items.length===1?'zapis':'zapisa')+' <span aria-hidden="true">⌄</span></span></summary><div class="auditDayBody">'+items.map(entryHTML).join('')+'</div></details>').join('');
  shell('<section class="panel"><div class="panelTop"><h2>Dnevnik aktivnosti</h2><span class="chip">'+rows.length+' zapisa</span></div><p class="hint">Otvori datum za pregled tko je što radio i u koliko sati.</p><input id="auditFilter" class="search" placeholder="Traži konobara ili radnju"><div id="auditRows">'+(rows.length?groups:'<div class="hint">Još nema zabilježenih aktivnosti.</div>')+'</div></section>','Dnevnik aktivnosti');
+ document.querySelectorAll('.undoLatest').forEach(button=>button.onclick=async()=>{
+  if(!confirm('Poništiti posljednju promjenu? Stanje robe i pripadajući podaci vratit će se na prethodno stanje. Povijest poništavanja ostaje sačuvana.'))return;
+  const pin=prompt('Unesi svoj administratorski PIN za potvrdu poništavanja');
+  if(pin===null)return;
+  if(!pin)return toast('PIN je obvezan.');
+  button.disabled=true;
+  try{await run('appUndoLastAudit',state.token,pin);toast('Posljednja radnja je poništena.');await audit()}
+  catch(e){button.disabled=false;toast(e.message||'Poništavanje nije uspjelo.')}
+ });
  $('auditFilter').oninput=()=>{
   const q=$('auditFilter').value.toLocaleLowerCase('hr').trim();
   document.querySelectorAll('.auditDay').forEach(day=>{
