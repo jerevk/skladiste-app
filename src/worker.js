@@ -41,6 +41,95 @@ async function recordAudit(db,actor,method,args,result,device){
  .bind(uid(),actor?.id||null,actor?.name||"Nepoznato",auditNames[method],text(description,900),text(device?.id,100),text(device?.label,90)).run();
 }
 
+
+const reversibleMethods=new Set(["appSaveCount","appSaveIncoming","appCreateSupply","appSaveSupplyList","appFinishSupply","appAdminSetFridgeCapacity","appAdminSetItemPrice","appAdminSetMinimum","appAdminRenameItem","appAdminDeleteItem"]);
+async function stateForUndo(db,method,args,result){
+ const ids=[];
+ let requestId=null;
+ if(method==="appSaveCount")for(const e of Array.isArray(args[2])?args[2]:[])ids.push(text(e.key,100));
+ if(method==="appSaveIncoming"||method==="appCreateSupply")for(const e of Array.isArray(args[1])?args[1]:[])ids.push(text(e.key,100));
+ if(method.startsWith("appAdmin"))ids.push(text(args[1],100));
+ if(["appSaveSupplyList","appFinishSupply","appCreateSupply"].includes(method)){
+  requestId=method==="appCreateSupply"?result?.listId:text(args[1],100);
+  if(requestId){
+   const request=await db.prepare("SELECT * FROM supply_requests WHERE id=?").bind(requestId).first();
+   const lines=(await db.prepare("SELECT * FROM supply_lines WHERE request_id=? ORDER BY id").bind(requestId).all()).results;
+   for(const line of lines)ids.push(line.item_id);
+   const unique=[...new Set(ids.filter(Boolean))];
+   const items=await Promise.all(unique.map(id=>db.prepare("SELECT * FROM items WHERE id=?").bind(id).first()));
+   return{items:items.filter(Boolean),request,lines};
+  }
+ }
+ const unique=[...new Set(ids.filter(Boolean))];
+ const items=await Promise.all(unique.map(id=>db.prepare("SELECT * FROM items WHERE id=?").bind(id).first()));
+ return{items:items.filter(Boolean),request:null,lines:[]};
+}
+const recordUndoFields=["qty","capacity","price","min_qty","group_name","name","active"];
+function sameUndoValue(a,b){return JSON.stringify(a)===JSON.stringify(b)}
+function itemChanged(a,b){return recordUndoFields.some(k=>!sameUndoValue(a?.[k],b?.[k]))}
+async function revertLastAudit(db,actor,pin,device){
+ const secret=String(pin??"");
+ if(!secret)bad("Upiši administratorski PIN.");
+ const adminRow=await db.prepare("SELECT * FROM users WHERE id=? AND role='ADMIN' AND active=1").bind(actor.id).first();
+ if(!adminRow)bad("Nedopuštena radnja.",403);
+ if(adminRow.locked_until>Date.now())bad("Previše pogrešnih pokušaja. Pokušaj kasnije.",429);
+ const verified=await pinHash(secret,adminRow.pin_salt);
+ if(verified!==adminRow.pin_hash){
+  const attempts=adminRow.failed_attempts+1;
+  await db.prepare("UPDATE users SET failed_attempts=?,locked_until=? WHERE id=?").bind(attempts,attempts>=5?Date.now()+15*60*1000:0,actor.id).run();
+  bad("Pogrešan administratorski PIN.",403);
+ }
+ await db.prepare("UPDATE users SET failed_attempts=0,locked_until=0 WHERE id=?").bind(actor.id).run();
+ // Undo applies only to the latest changed operation, not an arbitrary older record.
+ const last=await db.prepare("SELECT a.id,a.action,a.description,u.before_json,u.after_json,u.undone_at FROM audit_events a LEFT JOIN audit_undo u ON u.audit_id=a.id WHERE a.action NOT IN ('Prijava','Odjava','Poništena radnja') ORDER BY a.rowid DESC LIMIT 1").first();
+ if(!last||!last.before_json||last.undone_at)bad("Posljednja promjena nema sigurne podatke za poništavanje.");
+ const before=JSON.parse(last.before_json),after=JSON.parse(last.after_json);
+ const prior=new Map(before.items.map(i=>[i.id,i]));
+ const expected=new Map(after.items.map(i=>[i.id,i]));
+ const current=await Promise.all(after.items.map(i=>db.prepare("SELECT * FROM items WHERE id=?").bind(i.id).first()));
+ if(current.some((it,i)=>!it||it.version!==after.items[i].version||recordUndoFields.some(k=>!sameUndoValue(it[k],after.items[i][k]))))bad("U međuvremenu je promijenjeno stanje artikla. Poništavanje nije sigurno.",409);
+ const requestId=after.request?.id||before.request?.id;
+ if(requestId){
+  const nowReq=await db.prepare("SELECT * FROM supply_requests WHERE id=?").bind(requestId).first();
+  const nowLines=(await db.prepare("SELECT * FROM supply_lines WHERE request_id=? ORDER BY id").bind(requestId).all()).results;
+  if(!sameUndoValue(nowReq,after.request)||!sameUndoValue(nowLines,after.lines))bad("Popis je u međuvremenu promijenjen. Poništavanje nije sigurno.",409);
+ }
+ const q=[];
+ for(const afterIt of after.items){
+  const old=prior.get(afterIt.id);
+  if(!old)bad("Nije moguće poništiti nastanak nepoznatog artikla.",409);
+  if(!itemChanged(old,afterIt))continue;
+  q.push(db.prepare("UPDATE items SET qty=?,capacity=?,price=?,min_qty=?,group_name=?,name=?,active=?,version=version+1 WHERE id=? AND version=?")
+   .bind(old.qty,old.capacity,old.price,old.min_qty,old.group_name,old.name,old.active,old.id,afterIt.version));
+  q.push(db.prepare("INSERT INTO guard_checks(ok) SELECT changes()"));
+  if(old.qty!==afterIt.qty)q.push(db.prepare("INSERT INTO movements(id,item_id,movement_type,delta,before_qty,after_qty,actor_id,note) VALUES(?,?,?,?,?,?,?,?)")
+   .bind(uid(),old.id,"PONISTAVANJE",Math.round((old.qty-afterIt.qty)*1000)/1000,afterIt.qty,old.qty,actor.id,"Poništen log "+last.id));
+ }
+ if(requestId){
+  if(!before.request){
+   q.push(db.prepare("DELETE FROM supply_lines WHERE request_id=?").bind(requestId));
+   q.push(db.prepare("DELETE FROM supply_requests WHERE id=? AND status=?").bind(requestId,after.request.status));
+   q.push(db.prepare("INSERT INTO guard_checks(ok) SELECT changes()"));
+  }else{
+   const oldReq=before.request;
+   q.push(db.prepare("UPDATE supply_requests SET status=?,confirmed_by=?,confirmed_at=?,note=? WHERE id=? AND status=?").bind(oldReq.status,oldReq.confirmed_by,oldReq.confirmed_at,oldReq.note,requestId,after.request.status));
+   q.push(db.prepare("INSERT INTO guard_checks(ok) SELECT changes()"));
+   const priorLines=new Map(before.lines.map(l=>[l.id,l]));
+   for(const l of after.lines){
+    const old=priorLines.get(l.id);if(!old)bad("Popis nema potpunu povijest.",409);
+    q.push(db.prepare("UPDATE supply_lines SET qty=?,decision=?,stock_before=?,stock_after=? WHERE id=? AND qty=? AND decision=?").bind(old.qty,old.decision,old.stock_before,old.stock_after,l.id,l.qty,l.decision));
+    q.push(db.prepare("INSERT INTO guard_checks(ok) SELECT changes()"));
+   }
+  }
+ }
+ q.push(db.prepare("UPDATE audit_undo SET undone_at=CURRENT_TIMESTAMP,undone_by=? WHERE audit_id=? AND undone_at IS NULL").bind(actor.id,last.id));
+ q.push(db.prepare("INSERT INTO guard_checks(ok) SELECT changes()"));
+ q.push(db.prepare("INSERT INTO audit_events(id,user_id,actor_name,action,description,device_id,device_label) VALUES(?,?,?,?,?,?,?)").bind(uid(),actor.id,actor.name,"Poništena radnja","Poništen log "+last.id+" · "+last.action+" · "+text(last.description,380),text(device?.id,100),text(device?.label,90)));
+ q.push(db.prepare("DELETE FROM guard_checks"));
+ try{await db.batch(q)}catch{bad("Poništavanje nije uspjelo zbog promjene podataka. Osvježi dnevnik.",409)}
+ return{ok:true,action:last.action};
+}
+
 async function handle(db,method,args,env){
  if(method==="appPublicConfig"){const r=await db.prepare("SELECT id,name FROM users WHERE active=1 ORDER BY name").all();return{users:r.results,appName:"Skladište"}}
  if(method==="appSetup"){const [secret,name,pin]=args;if(!env.SETUP_KEY||text(secret,400)!==env.SETUP_KEY)bad("Neispravan ključ za početno postavljanje.",403);if(!/^[0-9]{6,12}$/.test(String(pin)))bad("Administratorski PIN mora imati 6 do 12 znamenki.");const count=await db.prepare("SELECT count(*) AS n FROM users").first();if(count.n)bad("Početna administracija već postoji.");const salt=randomHex();await db.prepare("INSERT INTO users(id,name,role,pin_salt,pin_hash) VALUES(?,?,?,?,?)").bind(uid(),text(name,80)||"Administrator","ADMIN",salt,await pinHash(pin,salt)).run();return{ok:true}}
@@ -53,8 +142,9 @@ async function handle(db,method,args,env){
  if(method==="appGetAudit"){
  await admin(db,token);
  const limit=Math.min(300,Math.max(1,Number(args[1])||150));
- return(await db.prepare("SELECT actor_name AS actor,action,description,device_label AS device,created_at AS createdAt FROM audit_events ORDER BY created_at DESC,rowid DESC LIMIT ?").bind(limit).all()).results;
+ return(await db.prepare("SELECT a.id,a.actor_name AS actor,a.action,a.description,a.device_label AS device,a.created_at AS createdAt,CASE WHEN u.audit_id IS NOT NULL THEN 1 ELSE 0 END AS reversible,CASE WHEN u.undone_at IS NOT NULL THEN 1 ELSE 0 END AS undone FROM audit_events a LEFT JOIN audit_undo u ON u.audit_id=a.id ORDER BY a.rowid DESC LIMIT ?").bind(limit).all()).results;
  }
+ if(method==="appUndoLastAudit"){await admin(db,token);return revertLastAudit(db,u,args[1],env.__requestDevice||{});}
  if(method==="appBootstrap")return{waiter:{id:u.id,name:u.name,role:u.role},spreadsheet:"Cloudflare D1"};
  if(method==="appGetCatalog"){const items=await allItems(db);return{sections:modes.filter(m=>m!=="fridge").map(category=>({key:category,title:({pivo:"Pivo",pica:"Pića",zesta:"Žesta",toplo:"Topli napitci"})[category],items:items.filter(i=>i.category===category).map(i=>({key:i.id,mode:i.category,section_name:i.category,group_name:i.group_name,item_name:i.name,current_qty:i.qty,unit_price:i.price,min_qty:i.min_qty}))})),updatedAt:timestamp()}}
  if(method==="appGetCount"){const category=text(args[1]);if(!modes.includes(category))bad("Nepoznata kategorija.");const items=await allItems(db,category);return{sheetName:category,updatedAt:timestamp(),rows:items.map(i=>({item_location_id:i.id,group_name:i.group_name,item_name:i.name,count_mode:category==="fridge"?"holes":"quantity",full_capacity:category==="fridge"?i.capacity:null,current_qty:category==="fridge"?Math.max(0,(i.capacity||0)-i.qty):i.qty,unit_price:i.price}))}}
@@ -164,9 +254,18 @@ async function handle(db,method,args,env){
 export default {async fetch(request,env){try{const url=new URL(request.url);if(url.pathname==="/api/health")return send({ok:true,storage:"Cloudflare D1"});if(url.pathname.startsWith("/api/")){if(request.method!=="POST")return send({error:"POST required"},405);if(!env.DB)return send({error:"D1 baza nije povezana."},503);if(Number(request.headers.get("content-length")||0)>100000)return send({error:"Prevelik zahtjev."},413);const body=await request.json();const method=url.pathname.slice(5),args=Array.isArray(body.args)?body.args:[];
 const device={id:text(body.device?.id,100),label:text(body.device?.label,90)};
 const actorBefore=method==="appLogout"?await userFromToken(env.DB,args[0]):null;
-const result=await handle(env.DB,method,args,env);
+const reversible=reversibleMethods.has(method);
+const before=reversible?await stateForUndo(env.DB,method,args):null;
+const result=await handle(env.DB,method,args,{...env,__requestDevice:device});
 if(auditNames[method]){
  try{const actor=method==="appLogin"?await userFromToken(env.DB,result.token):actorBefore||await userFromToken(env.DB,args[0]);
- await recordAudit(env.DB,actor,method,args,result,device)}catch(e){console.error("Neuspješan upis loga",e)}
+ if(reversible){
+  const after=await stateForUndo(env.DB,method,args,result);
+  const auditId=uid(),detail=await auditDetail(env.DB,method,args,result);
+  await env.DB.batch([
+   env.DB.prepare("INSERT INTO audit_events(id,user_id,actor_name,action,description,device_id,device_label) VALUES(?,?,?,?,?,?,?)").bind(auditId,actor.id,actor.name,auditNames[method],text(detail,900),device.id,device.label),
+   env.DB.prepare("INSERT INTO audit_undo(audit_id,before_json,after_json) VALUES(?,?,?)").bind(auditId,JSON.stringify(before),JSON.stringify(after))
+  ]);
+ }else await recordAudit(env.DB,actor,method,args,result,device)}catch(e){console.error("Neuspješan upis loga",e)}
 }
 return send(result)}return env.ASSETS.fetch(request)}catch(e){return send({error:e.message||"Došlo je do pogreške."},e.status||500)}}};
