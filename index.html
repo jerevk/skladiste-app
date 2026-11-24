@@ -332,6 +332,27 @@ $('root').innerHTML='<div class="app"><header class="scriptTop"><div class="scri
 bindThemeToggles();const close=()=>{$('scriptDrawer').classList.remove('on');$('drawerBack').classList.remove('on');$('menuOpen')?.setAttribute('aria-expanded','false')};
 $('menuOpen').setAttribute('aria-controls','scriptDrawer');$('menuOpen').setAttribute('aria-expanded','false');$('menuOpen').onclick=()=>{const open=!$('scriptDrawer').classList.contains('on');$('scriptDrawer').classList.toggle('on',open);$('drawerBack').classList.toggle('on',open);$('menuOpen').setAttribute('aria-expanded',String(open))};
 $('menuClose').onclick=close;$('drawerBack').onclick=close;
+ // Swipe with one finger from the left edge to open, swipe left to close.
+ // Listeners are attached to the newly rendered app so navigation never accumulates handlers.
+ const appSurface=document.querySelector('#root .app');
+ let menuSwipe=null;
+ appSurface.addEventListener('touchstart',event=>{
+  if(event.touches.length!==1){menuSwipe=null;return}
+  const t=event.touches[0],drawerOpen=$('scriptDrawer').classList.contains('on');
+  if(!drawerOpen&&t.clientX>72){menuSwipe=null;return}
+  if(drawerOpen&&!event.target.closest('#scriptDrawer, #drawerBack')){menuSwipe=null;return}
+  menuSwipe={x:t.clientX,y:t.clientY,time:Date.now(),drawerOpen};
+ },{passive:true});
+ appSurface.addEventListener('touchend',event=>{
+  if(!menuSwipe||event.changedTouches.length!==1){menuSwipe=null;return}
+  const t=event.changedTouches[0],dx=t.clientX-menuSwipe.x,dy=t.clientY-menuSwipe.y;
+  if(Math.abs(dx)>=75&&Math.abs(dx)>Math.abs(dy)*1.5&&Date.now()-menuSwipe.time<1000){
+   if(!menuSwipe.drawerOpen&&dx>0){$('scriptDrawer').classList.add('on');$('drawerBack').classList.add('on');$('menuOpen').setAttribute('aria-expanded','true')}
+   if(menuSwipe.drawerOpen&&dx<0)close();
+  }
+  menuSwipe=null;
+ },{passive:true});
+ appSurface.addEventListener('touchcancel',()=>{menuSwipe=null},{passive:true});
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{close();openPage(b.dataset.page)});
 $('logout').onclick=()=>{if(!demo)call('appLogout',state.token).catch(()=>{});clearSession();loginView()};
 }
