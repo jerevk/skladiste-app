@@ -259,6 +259,15 @@ async function handle(db,method,args,env){
  const mapped=items.map(i=>({key:i.id,mode:i.category,group_name:i.group_name,item_name:i.name,current_qty:i.qty,unit_price:i.price,linked_item_id:i.linked_item_id,full_capacity:i.capacity,holes:i.category==="fridge"?Math.max(0,(i.capacity||0)-i.qty):null}));
  return{title:"Ukupno stanje",items:mapped,values:[["Kategorija","Grupa","Artikl","Količina","Cijena"],...mapped.map(i=>[i.mode,i.group_name,i.item_name,i.current_qty,i.unit_price])],copyValues:mapped.map(i=>i.current_qty)};
  }
+ if(method==="appGetBackupHealth"){
+  await admin(db,token);
+  const active=await db.prepare("SELECT id,qty FROM items WHERE active=1 ORDER BY id").all();
+  const snapshot=await db.prepare("SELECT business_date,payload,updated_at FROM daily_stock_state ORDER BY business_date DESC LIMIT 1").first();
+  const today=businessDay();let missing=0,mismatch=0,invalid=false;
+  if(snapshot){try{const raw=JSON.parse(snapshot.payload),stored=Array.isArray(raw)?Object.fromEntries(raw.map(i=>[i.id,i.qty])):raw;for(const it of active.results){if(!Object.prototype.hasOwnProperty.call(stored,it.id))missing++;else if(Number(stored[it.id])!==Number(it.qty)&&snapshot.business_date===today)mismatch++}}catch{invalid=true}}
+  const good=!!snapshot&&!invalid&&snapshot.business_date===today&&missing===0&&mismatch===0;
+  return{today,activeItems:active.results.length,latestDate:snapshot?.business_date||null,latestSavedAt:snapshot?.updated_at||null,missing,mismatch,invalid,stockSnapshotOk:good,emailBackupVerified:false,emailStatus:"Status Gmail ZIP backupa nije povezan s aplikacijom. Provjeri pristigli e-mail i Apps Script Execution log."};
+ }
  if(method==="appGetBackups"){
   await admin(db,token);
   const earliest=await db.prepare("SELECT MIN(business_date) AS d FROM daily_stock_state").first();
