@@ -69,19 +69,23 @@ function sameUndoValue(a,b){return JSON.stringify(a)===JSON.stringify(b)}
 function itemChanged(a,b){return recordUndoFields.some(k=>!sameUndoValue(a?.[k],b?.[k]))}
 async function revertLastAudit(db,actor,pin,device){
  const secret=String(pin??"");
- if(!secret)bad("Upiši administratorski PIN.");
- const adminRow=await db.prepare("SELECT * FROM users WHERE id=? AND role='ADMIN' AND active=1").bind(actor.id).first();
- if(!adminRow)bad("Nedopuštena radnja.",403);
- if(adminRow.locked_until>Date.now())bad("Previše pogrešnih pokušaja. Pokušaj kasnije.",429);
- const verified=await pinHash(secret,adminRow.pin_salt);
- if(verified!==adminRow.pin_hash){
-  const attempts=adminRow.failed_attempts+1;
-  await db.prepare("UPDATE users SET failed_attempts=?,locked_until=? WHERE id=?").bind(attempts,attempts>=5?Date.now()+15*60*1000:0,actor.id).run();
-  bad("Pogrešan administratorski PIN.",403);
+ if(!secret)bad("Upiši PIN osobe koja je napravila radnju.");
+ // Administrator vidi sve zapise; konobar može poništiti samo svoju posljednju radnju.
+ const last=actor.role==="ADMIN"
+  ?await db.prepare("SELECT a.id,a.user_id,a.action,a.description,u.before_json,u.after_json,u.undone_at FROM audit_events a LEFT JOIN audit_undo u ON u.audit_id=a.id WHERE a.action NOT IN ('Prijava','Odjava','Poništena radnja') ORDER BY a.rowid DESC LIMIT 1").first()
+  :await db.prepare("SELECT a.id,a.user_id,a.action,a.description,u.before_json,u.after_json,u.undone_at FROM audit_events a LEFT JOIN audit_undo u ON u.audit_id=a.id WHERE a.user_id=? AND a.action NOT IN ('Prijava','Odjava','Poništena radnja') ORDER BY a.rowid DESC LIMIT 1").bind(actor.id).first();
+ if(!last)bad("Nema radnje za poništavanje.");
+ if(actor.role!=="ADMIN"&&last.user_id!==actor.id)bad("Možeš poništiti samo svoju radnju.",403);
+ const owner=await db.prepare("SELECT * FROM users WHERE id=? AND active=1").bind(last.user_id).first();
+ if(!owner)bad("Korisnik koji je napravio radnju više nije aktivan.",403);
+ if(owner.locked_until>Date.now())bad("Previše pogrešnih pokušaja. Pokušaj kasnije.",429);
+ const verified=await pinHash(secret,owner.pin_salt);
+ if(verified!==owner.pin_hash){
+  const attempts=owner.failed_attempts+1;
+  await db.prepare("UPDATE users SET failed_attempts=?,locked_until=? WHERE id=?").bind(attempts,attempts>=5?Date.now()+15*60*1000:0,owner.id).run();
+  bad("Pogrešan PIN konobara koji je napravio radnju.",403);
  }
- await db.prepare("UPDATE users SET failed_attempts=0,locked_until=0 WHERE id=?").bind(actor.id).run();
- // Undo applies only to the latest changed operation, not an arbitrary older record.
- const last=await db.prepare("SELECT a.id,a.action,a.description,u.before_json,u.after_json,u.undone_at FROM audit_events a LEFT JOIN audit_undo u ON u.audit_id=a.id WHERE a.action NOT IN ('Prijava','Odjava','Poništena radnja') ORDER BY a.rowid DESC LIMIT 1").first();
+ await db.prepare("UPDATE users SET failed_attempts=0,locked_until=0 WHERE id=?").bind(owner.id).run();
  if(!last||!last.before_json||last.undone_at)bad("Posljednja promjena nema sigurne podatke za poništavanje.");
  const before=JSON.parse(last.before_json),after=JSON.parse(last.after_json);
  const prior=new Map(before.items.map(i=>[i.id,i]));
@@ -136,15 +140,15 @@ async function handle(db,method,args,env){
  if(method==="appLogin"){const [id,pin]=args;const u=await db.prepare("SELECT * FROM users WHERE id=? AND active=1").bind(text(id,100)).first();if(!u)bad("Neispravan korisnik ili PIN.",401);if(u.locked_until>Date.now())bad("Previše pokušaja. Pokušaj ponovno za nekoliko minuta.",429);const h=await pinHash(pin,u.pin_salt);if(h!==u.pin_hash){const attempts=u.failed_attempts+1;await db.prepare("UPDATE users SET failed_attempts=?,locked_until=? WHERE id=?").bind(attempts,attempts>=5?Date.now()+15*60*1000:0,u.id).run();bad("Neispravan korisnik ili PIN.",401)}await db.prepare("UPDATE users SET failed_attempts=0,locked_until=0 WHERE id=?").bind(u.id).run();const token=randomHex(32);await db.prepare("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)").bind(await hashText(token),u.id,Date.now()+(args[2]===false?6*3600*1000:30*24*3600*1000)).run();return{token,waiter:{id:u.id,name:u.name,role:u.role}}}
  if(method==="appLogout"){await db.prepare("DELETE FROM sessions WHERE token_hash=?").bind(await hashText(args[0])).run();return true}
  const token=args[0],u=await userFromToken(db,token);
- const waiterAllowed=new Set(["appBootstrap","appGetCatalog","appGetCount","appSaveCount","appSaveIncoming","appCreateSupply","appRecentSupply","appGetSupplyList","appGetSupplyAudit","appSaveSupplyList","appFinishSupply","appRecentIncoming"]);
+ const waiterAllowed=new Set(["appBootstrap","appGetCatalog","appGetCount","appSaveCount","appSaveIncoming","appCreateSupply","appRecentSupply","appGetSupplyList","appGetSupplyAudit","appSaveSupplyList","appFinishSupply","appRecentIncoming","appGetAudit","appUndoLastAudit"]);
  if(u.role!=="ADMIN"&&!waiterAllowed.has(method))bad("Ova funkcija dostupna je samo administratoru.",403);
  if(u.role!=="ADMIN"&&(method==="appGetCount"||method==="appSaveCount")&&text(args[1])!=="fridge")bad("Konobar može uređivati samo rupe u frižideru.",403);
  if(method==="appGetAudit"){
- await admin(db,token);
  const limit=Math.min(300,Math.max(1,Number(args[1])||150));
- return(await db.prepare("SELECT a.id,a.actor_name AS actor,a.action,a.description,a.device_label AS device,a.created_at AS createdAt,CASE WHEN u.audit_id IS NOT NULL THEN 1 ELSE 0 END AS reversible,CASE WHEN u.undone_at IS NOT NULL THEN 1 ELSE 0 END AS undone FROM audit_events a LEFT JOIN audit_undo u ON u.audit_id=a.id ORDER BY a.rowid DESC LIMIT ?").bind(limit).all()).results;
+ const sql="SELECT a.id,a.user_id,a.actor_name AS actor,a.action,a.description,a.device_label AS device,a.created_at AS createdAt,CASE WHEN au.audit_id IS NOT NULL THEN 1 ELSE 0 END AS reversible,CASE WHEN au.undone_at IS NOT NULL THEN 1 ELSE 0 END AS undone FROM audit_events a LEFT JOIN audit_undo au ON au.audit_id=a.id";
+ return (await db.prepare(sql+(u.role==="ADMIN"?"":" WHERE a.user_id=?")+" ORDER BY a.rowid DESC LIMIT ?").bind(...(u.role==="ADMIN"?[limit]:[u.id,limit])).all()).results;
  }
- if(method==="appUndoLastAudit"){await admin(db,token);return revertLastAudit(db,u,args[1],env.__requestDevice||{});}
+ if(method==="appUndoLastAudit"){return revertLastAudit(db,u,args[1],env.__requestDevice||{});}
  if(method==="appBootstrap")return{waiter:{id:u.id,name:u.name,role:u.role},spreadsheet:"Cloudflare D1"};
  if(method==="appGetCatalog"){const items=await allItems(db);return{sections:modes.filter(m=>m!=="fridge").map(category=>({key:category,title:({pivo:"Pivo",pica:"Pića",zesta:"Žesta",toplo:"Topli napitci"})[category],items:items.filter(i=>i.category===category).map(i=>({key:i.id,mode:i.category,section_name:i.category,group_name:i.group_name,item_name:i.name,current_qty:i.qty,unit_price:i.price,min_qty:i.min_qty}))})),updatedAt:timestamp()}}
  if(method==="appGetCount"){const category=text(args[1]);if(!modes.includes(category))bad("Nepoznata kategorija.");const items=await allItems(db,category);return{sheetName:category,updatedAt:timestamp(),rows:items.map(i=>({item_location_id:i.id,group_name:i.group_name,item_name:i.name,count_mode:category==="fridge"?"holes":"quantity",full_capacity:category==="fridge"?i.capacity:null,current_qty:category==="fridge"?Math.max(0,(i.capacity||0)-i.qty):i.qty,unit_price:i.price}))}}
