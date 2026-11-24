@@ -284,7 +284,28 @@ html[data-theme="light"] .originalHomeIntro{background:linear-gradient(135deg,#f
 html[data-theme="light"] .compareSummary{background:#f1f6fb;border-color:#dce5ee}
 html[data-theme="light"] .compareSummary span{color:#6b7c92}
 @media(max-width:520px){.compareDateRow{gap:7px;grid-template-columns:minmax(0,1fr) 16px minmax(0,1fr)}.compareDateRow select{font-size:12px;padding:9px 5px}.compareSummary{display:grid;gap:5px}.compareSummary span{font-size:11px}.compareControls{align-items:flex-start}}
-@media(max-width:640px){.sheetPage{width:100%;min-width:0}.sheetPage .sheetScroller,.sheetPage .totalDesktopHint{display:none}.sheetPage .sheetToolbar{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:8px}.sheetPage .sheetToolbar button{flex:1 1 auto;min-width:0}.sheetPage .originalCopybar{flex-wrap:wrap}.sheetPage .originalCopybar button{flex:0 0 auto}.mobileTotalPanels{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;max-width:100%;min-width:0}.mobileTotalPanel{min-width:0;border:1px solid var(--line,#dfe6e2);border-radius:13px;background:var(--surface,#fff);overflow:hidden}.mobileTotalPanel h3{margin:0;padding:13px 14px;font-size:14px;font-weight:800;background:var(--surface-2,#f4f8f6);color:var(--fg,#142019)}.mobileTotalRow{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;min-height:42px;padding:9px 14px;border-top:1px solid var(--line,#edf1ef);font-size:13px}.mobileTotalRow span{min-width:0;overflow-wrap:anywhere}.mobileTotalRow strong{font-size:14px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;color:var(--fg,#142019)}}@media(min-width:641px){.mobileTotalPanels{display:none}}</style></head><body><div id="root"></div><div id="toast" class="toast hide"></div><script>
+@media(max-width:640px){.sheetPage{width:100%;min-width:0}.sheetPage .sheetScroller,.sheetPage .totalDesktopHint{display:none}.sheetPage .sheetToolbar{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:8px}.sheetPage .sheetToolbar button{flex:1 1 auto;min-width:0}.sheetPage .originalCopybar{flex-wrap:wrap}.sheetPage .originalCopybar button{flex:0 0 auto}.mobileTotalPanels{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;max-width:100%;min-width:0}.mobileTotalPanel{min-width:0;border:1px solid var(--line,#dfe6e2);border-radius:13px;background:var(--surface,#fff);overflow:hidden}.mobileTotalPanel h3{margin:0;padding:13px 14px;font-size:14px;font-weight:800;background:var(--surface-2,#f4f8f6);color:var(--fg,#142019)}.mobileTotalRow{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;min-height:42px;padding:9px 14px;border-top:1px solid var(--line,#edf1ef);font-size:13px}.mobileTotalRow span{min-width:0;overflow-wrap:anywhere}.mobileTotalRow strong{font-size:14px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;color:var(--fg,#142019)}}@media(min-width:641px){.mobileTotalPanels{display:none}}
+/* Donos: prikaz cijelog popisa bez padajucih odabira */
+.supplyFullPage{max-width:900px;margin:0 auto}
+.supplyFullPage .supplyBack{margin:0 0 12px}
+.supplyFullPage #supplyDetail>.panel{margin-top:0!important}
+.supplyFullPage .categoryLevel,.supplyFullPage .subgroupLevel{overflow:visible}
+.supplyChoiceButtons{display:flex;gap:6px;align-items:stretch}
+.supplyChoiceBtn{border:1px solid var(--line,#d8e2dc);border-radius:10px;min-width:57px;min-height:46px;padding:4px 9px;background:var(--surface,#fff);color:var(--fg,#18291f);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;cursor:pointer}
+.supplyChoiceBtn span{font-size:21px;line-height:1;font-weight:900}
+.supplyChoiceBtn small{font-size:10px;font-weight:750}
+.supplyChoiceBtn.supplyYes.is-selected{background:#176c47;color:#fff;border-color:#176c47}
+.supplyChoiceBtn.supplyNo.is-selected{background:#ac3038;color:#fff;border-color:#ac3038}
+.supplyChoiceBtn:focus-visible{outline:3px solid #719fd7;outline-offset:2px}
+@media(max-width:640px){
+.supplyFullPage .panel{padding:12px}
+.supplyFullPage .supplyEditLine{display:flex;flex-direction:column;align-items:stretch;gap:9px;padding:12px 3px}
+.supplyFullPage .supplyEditControls{display:flex;flex-wrap:wrap;justify-content:space-between;gap:9px;width:100%}
+.supplyFullPage .supplyEditControls .stepperUI{flex:1 1 140px;min-width:0;max-width:210px}
+.supplyFullPage .supplyChoiceButtons{flex:0 0 auto;margin-left:auto}
+.supplyFullPage .supplyChoiceBtn{min-width:58px}
+}
+</style></head><body><div id="root"></div><div id="toast" class="toast hide"></div><script>
 const THEME_KEY='skladiste-theme';
 function applyTheme(theme){const next=theme==='light'?'light':'dark';document.documentElement.dataset.theme=next;try{localStorage.setItem(THEME_KEY,next)}catch{}document.querySelectorAll('[data-theme-toggle]').forEach(b=>{b.textContent=next==='dark'?'☀':'☾';b.title=next==='dark'?'Svijetla tema':'Tamna tema';b.setAttribute('aria-label',b.title)});document.querySelector('meta[name="theme-color"]')?.setAttribute('content',next==='dark'?'#101621':'#f4f6fa')}
 try{applyTheme(localStorage.getItem(THEME_KEY)||'dark')}catch{applyTheme('dark')}
@@ -446,11 +467,12 @@ async function openSupplyList(id){
  let original=d.items.map(it=>({key:String(it.key),value:Number(it.qty),decision:String(it.decision||''),originalQty:Number(it.qty),originalDecision:String(it.decision||'')}));
  const lineHTML=it=>{
   const n=Number(it.qty),decision=String(it.decision||'');
-  return '<div class="line supplyEditLine" data-supply-row="'+x(it.key)+'"><div><strong>'+x(it.item)+'</strong><div class="sub">Skladište pri izradi: '+x(it.stock)+' · '+x(it.group)+'</div></div><div class="supplyEditControls"><div class="stepperUI"><button type="button" class="stepperBtn supplyAdjust" data-delta="-1">−</button><input class="qty supplyQty" type="number" min="0.001" step="'+(it.section==='zesta'?'0.1':'1')+'" value="'+x(n)+'" inputmode="decimal" aria-label="Količina '+x(it.item)+'"><button type="button" class="stepperBtn supplyAdjust" data-delta="1">+</button></div><select class="supplyChoice" aria-label="Potvrda '+x(it.item)+'"><option value="">Odaberi</option><option value="DONESENO"'+(decision==='DONESENO'?' selected':'')+'>Doneseno</option><option value="NEMA"'+(decision==='NEMA'?' selected':'')+'>Nema</option></select></div></div>';
+  return '<div class="line supplyEditLine" data-supply-row="'+x(it.key)+'"><div><strong>'+x(it.item)+'</strong><div class="sub">Skladište pri izradi: '+x(it.stock)+' · '+x(it.group)+'</div></div><div class="supplyEditControls"><div class="stepperUI"><button type="button" class="stepperBtn supplyAdjust" data-delta="-1">−</button><input class="qty supplyQty" type="number" min="0.001" step="'+(it.section==='zesta'?'0.1':'1')+'" value="'+x(n)+'" inputmode="decimal" aria-label="Količina '+x(it.item)+'"><button type="button" class="stepperBtn supplyAdjust" data-delta="1">+</button></div><div class="supplyChoiceButtons" role="group" aria-label="Potvrda '+x(it.item)+'"><input type="hidden" class="supplyChoice" value="'+x(decision)+'"><button type="button" class="supplyChoiceBtn supplyYes'+(decision==='DONESENO'?' is-selected':'')+'" data-decision="DONESENO" aria-pressed="'+(decision==='DONESENO')+'" title="Doneseno"><span aria-hidden="true">✓</span><small>Ima</small></button><button type="button" class="supplyChoiceBtn supplyNo'+(decision==='NEMA'?' is-selected':'')+'" data-decision="NEMA" aria-pressed="'+(decision==='NEMA')+'" title="Nema"><span aria-hidden="true">✕</span><small>Nema</small></button></div></div></div>';
  };
- const grouped=groupedCatalogHTML(MODES.slice(0,4).map(m=>({key:m[0],title:m[1],items:d.items.filter(i=>i.section===m[0]).map(i=>({...i,group_name:i.group}))})),lineHTML);
+ const grouped=groupedCatalogHTML(MODES.slice(0,4).map(m=>({key:m[0],title:m[1],items:d.items.filter(i=>i.section===m[0]).map(i=>({...i,group_name:i.group}))})).filter(s=>s.items.length),lineHTML).replace(/<details class="countGroup (categoryLevel|subgroupLevel)">/g,'<details class="countGroup $1" open>');
+ shell('<div class="supplyFullPage"><button type="button" class="soft supplyBack" id="backToSupply">← Natrag na popise</button><div id="supplyDetail"></div></div>','Popis za donos');
  const detail=$('supplyDetail');
- if(!detail)return;
+ $('backToSupply').onclick=()=>goods('supply');
  detail.innerHTML='<div class="panel" style="margin-top:16px"><div class="panelTop"><h2>Popis za donos · '+x(d.waiter||'')+'</h2><span class="chip">'+(finished?'Završeno':'Čeka')+'</span></div><p class="hint">Izrađeno '+x(d.createdAt)+(d.completedAt?' · Završeno '+x(d.completedAt):'')+(d.confirmedBy?' · Potvrdio '+x(d.confirmedBy):'')+'</p><p class="hint">'+(finished?'Naknadna izmjena popisa korigira stanje skladišta samo za razliku. Svaka korekcija ostaje evidentirana.':'Promjena bilo koje količine poništava sve potvrde. Za završetak označi svaki artikl.')+'</p><div id="supplyEditRows">'+grouped+'</div><div class="stickySave"><button class="soft" id="saveSupplyDraft">'+(finished?'Spremi ispravak':'Spremi popis')+'</button><button class="primary" id="finishSupply"'+(finished?' style="display:none"':' disabled')+'>Gotovo</button></div></div>';
  const rows=[...detail.querySelectorAll('[data-supply-row]')];
  const decisions=()=>rows.map(el=>{const old=original.find(v=>v.key===el.dataset.supplyRow);return{key:el.dataset.supplyRow,value:el.querySelector('.supplyQty').value,decision:el.querySelector('.supplyChoice').value,originalQty:old.originalQty,originalDecision:old.originalDecision}});
@@ -458,7 +480,7 @@ async function openSupplyList(id){
  const updateFinish=()=>{const el=$('finishSupply');if(el&&!finished)el.disabled=!valid()||!rows.every(row=>!!row.querySelector('.supplyChoice').value)};
  const onQtyChange=()=>{
   // U cijeloj listi resetiraj svaku dotad potvrđenu odluku.
-  rows.forEach(row=>row.querySelector('.supplyChoice').value='');
+  rows.forEach(row=>{row.querySelector('.supplyChoice').value='';row.querySelectorAll('[data-decision]').forEach(b=>{b.classList.remove('is-selected');b.setAttribute('aria-pressed','false')})});
   updateFinish();
  };
  rows.forEach(row=>{
@@ -468,7 +490,7 @@ async function openSupplyList(id){
    const step=Number(input.step)||1,change=Number(btn.dataset.delta)*step;
    input.value=String(Math.max(step,Math.round(((Number(input.value)||0)+change)*1000)/1000));onQtyChange();
   });
-  row.querySelector('.supplyChoice').onchange=updateFinish;
+  row.querySelectorAll('[data-decision]').forEach(btn=>btn.onclick=()=>{const field=row.querySelector('.supplyChoice');const next=btn.dataset.decision;field.value=field.value===next?'':next;row.querySelectorAll('[data-decision]').forEach(b=>{const selected=b.dataset.decision===field.value;b.classList.toggle('is-selected',selected);b.setAttribute('aria-pressed',String(selected))});updateFinish()});
  });
  updateFinish();
  const send=async(method)=>{
