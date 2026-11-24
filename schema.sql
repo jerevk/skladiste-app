@@ -62,6 +62,14 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_events_user ON audit_events(user_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS audit_undo (
+ audit_id TEXT PRIMARY KEY REFERENCES audit_events(id),
+ before_json TEXT NOT NULL,
+ after_json TEXT NOT NULL,
+ undone_at TEXT,
+ undone_by TEXT REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_audit_undo_active ON audit_undo(undone_at);
 
 -- Samostalni početni katalog; sve početne količine su 0, nisu stvarne zalihe.
 INSERT OR IGNORE INTO items(id,category,group_name,name,qty,min_qty,price,capacity) VALUES('seed-pivo-001','pivo','Veliko pivo','Ožujsko',0,5,0,NULL);
