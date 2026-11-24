@@ -69,8 +69,7 @@ async function handle(db,method,args,env){
   if(r.status==="CEKA"&&!final){
    // Svaka promjena kolicine na cekajucem popisu ponistava potvrde svih stavki.
    const reset=isChanging;
-   const q=updated.map(x=>db.prepare("UPDATE supply_lines SET qty=?,decision=? WHERE id=? AND qty=? AND decision=?").bind(x.amount,reset?"":x.decision,x.l.id,x.l.qty,x.l.decision));
-   for(let i=0;i<q.length;i++)q.splice(++i,0,db.prepare("INSERT INTO guard_checks(ok) SELECT changes()"));
+   const q=updated.flatMap(x=>[db.prepare("UPDATE supply_lines SET qty=?,decision=? WHERE id=? AND qty=? AND decision=?").bind(x.amount,reset?"":x.decision,x.l.id,x.l.qty,x.l.decision),db.prepare("INSERT INTO guard_checks(ok) SELECT changes()")]);
    q.push(db.prepare("DELETE FROM guard_checks"));
    try{await db.batch(q)}catch{bad("Popis se u međuvremenu promijenio. Osvježi.",409)}
    return{listId:id,status:"CEKA",reset,updated:updated.length};
