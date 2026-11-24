@@ -195,3 +195,12 @@ INSERT OR IGNORE INTO items(id,category,group_name,name,qty,min_qty,price,capaci
 INSERT OR IGNORE INTO items(id,category,group_name,name,qty,min_qty,price,capacity) VALUES('seed-fridge-020','fridge','Frižider','Breskva',0,5,0,24);
 INSERT OR IGNORE INTO items(id,category,group_name,name,qty,min_qty,price,capacity) VALUES('seed-fridge-021','fridge','Frižider','Limun',0,5,0,24);
 INSERT OR IGNORE INTO items(id,category,group_name,name,qty,min_qty,price,capacity) VALUES('seed-fridge-022','fridge','Frižider','Naranča',0,5,0,24);
+
+
+-- Daily closing balances in Europe/Zagreb; the latest entry on an inactive day
+-- is carried forward when comparing dates.
+CREATE TABLE IF NOT EXISTS daily_stock_state (
+ business_date TEXT PRIMARY KEY,
+ payload TEXT NOT NULL,
+ updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
