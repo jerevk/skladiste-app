@@ -45,6 +45,9 @@ html[data-theme="light"] .themeToggle{background:#fff;color:#18263c;border-color
  .scriptDrawer{width:min(88vw,330px)}
 }
 .supplyEditControls{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px}.supplyEditControls .supplyChoice{width:126px;max-width:126px}.supplyEditControls .stepperUI{display:flex;gap:4px}.supplyEditControls .qty{width:68px;max-width:68px;text-align:center}.supplyEditControls button{min-width:38px;min-height:42px}@media(max-width:570px){.supplyEditLine{grid-template-columns:1fr;gap:8px}.supplyEditControls{justify-content:flex-start}.supplyEditControls .supplyChoice{flex:1;max-width:none}}
+
+/* Mobilni izbornik mora nadjacati opce aside{display:none} pravilo. */
+@media(max-width:740px){.app>aside.scriptDrawer{display:block;visibility:visible;position:fixed;inset:0 auto 0 0;z-index:100;max-height:100dvh;overflow-y:auto;overscroll-behavior:contain}.drawerBack.on{display:block;z-index:95}.scriptTop{z-index:60}.hamb{position:relative;z-index:1}}
 </style></head><body><div id="root"></div><div id="toast" class="toast hide"></div><script>
 const THEME_KEY='skladiste-theme';
 function applyTheme(theme){const next=theme==='light'?'light':'dark';document.documentElement.dataset.theme=next;try{localStorage.setItem(THEME_KEY,next)}catch{}document.querySelectorAll('[data-theme-toggle]').forEach(b=>{b.textContent=next==='dark'?'☀':'☾';b.title=next==='dark'?'Svijetla tema':'Tamna tema';b.setAttribute('aria-label',b.title)});document.querySelector('meta[name="theme-color"]')?.setAttribute('content',next==='dark'?'#101621':'#f4f6fa')}
@@ -64,8 +67,8 @@ function shell(content,title,overline='SKLADIŠNA EVIDENCIJA'){
 const isAdmin=state.user?.role==='ADMIN';const nav=SECTIONS.filter(([id])=>isAdmin||['home','count','supply','incoming'].includes(id));
 const links=nav.map(([id,label])=>'<button class="'+(id===state.page?'sel':'')+'" data-page="'+id+'">'+x(label)+'</button>').join('');
 $('root').innerHTML='<div class="app"><header class="scriptTop"><div class="scriptBrand"><button class="hamb" id="menuOpen" aria-label="Otvori izbornik">☰</button><div><strong>Skladište</strong><small>Ukupno · Donos robe · Primka robe · Inventura</small></div></div><button type="button" class="themeToggle" data-theme-toggle aria-label="Promijeni temu">☀</button><span class="scriptConnected">'+(demo?'DEMO':'● Povezano')+'</span></header><div class="drawerBack" id="drawerBack"></div><aside class="scriptDrawer" id="scriptDrawer"><div class="drawerHeader"><b>Skladište</b><button id="menuClose" aria-label="Zatvori izbornik">×</button></div>'+links+'<div class="drawerUser">Prijavljen: <b>'+x(state.user?.name)+'</b><p><button class="soft" id="logout">Odjava</button></p></div></aside><main class="content"><div class="scriptHead"><div><h1>'+x(title)+'</h1><div class="sub">'+x(overline)+'</div></div></div>'+content+'</main></div>';
-bindThemeToggles();const close=()=>{$('scriptDrawer').classList.remove('on');$('drawerBack').classList.remove('on')};
-$('menuOpen').onclick=()=>{$('scriptDrawer').classList.add('on');$('drawerBack').classList.add('on')};
+bindThemeToggles();const close=()=>{$('scriptDrawer').classList.remove('on');$('drawerBack').classList.remove('on');$('menuOpen')?.setAttribute('aria-expanded','false')};
+$('menuOpen').setAttribute('aria-controls','scriptDrawer');$('menuOpen').setAttribute('aria-expanded','false');$('menuOpen').onclick=()=>{const open=!$('scriptDrawer').classList.contains('on');$('scriptDrawer').classList.toggle('on',open);$('drawerBack').classList.toggle('on',open);$('menuOpen').setAttribute('aria-expanded',String(open))};
 $('menuClose').onclick=close;$('drawerBack').onclick=close;
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{close();openPage(b.dataset.page)});
 $('logout').onclick=()=>{if(!demo)call('appLogout',state.token).catch(()=>{});state.token=null;state.user=null;loginView()};
