@@ -159,7 +159,7 @@ async function handle(db,method,args,env){
  if(method==="appLogin"){const [id,pin]=args;const u=await db.prepare("SELECT * FROM users WHERE id=? AND active=1").bind(text(id,100)).first();if(!u)bad("Neispravan korisnik ili PIN.",401);if(u.locked_until>Date.now())bad("Previše pokušaja. Pokušaj ponovno za nekoliko minuta.",429);const h=await pinHash(pin,u.pin_salt);if(h!==u.pin_hash){const attempts=u.failed_attempts+1;await db.prepare("UPDATE users SET failed_attempts=?,locked_until=? WHERE id=?").bind(attempts,attempts>=5?Date.now()+15*60*1000:0,u.id).run();bad("Neispravan korisnik ili PIN.",401)}await db.prepare("UPDATE users SET failed_attempts=0,locked_until=0 WHERE id=?").bind(u.id).run();const token=randomHex(32);await db.prepare("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)").bind(await hashText(token),u.id,Date.now()+(args[2]===false?6*3600*1000:30*24*3600*1000)).run();return{token,waiter:{id:u.id,name:u.name,role:u.role}}}
  if(method==="appLogout"){await db.prepare("DELETE FROM sessions WHERE token_hash=?").bind(await hashText(args[0])).run();return true}
  const token=args[0],u=await userFromToken(db,token);
- const waiterAllowed=new Set(["appBootstrap","appGetCatalog","appGetCount","appSaveCount","appSaveIncoming","appCreateSupply","appRecentSupply","appGetSupplyList","appGetSupplyAudit","appSaveSupplyList","appFinishSupply","appRecentIncoming","appGetAudit","appUndoLastAudit","appGetTotalState"]);
+ const waiterAllowed=new Set(["appBootstrap","appGetCatalog","appGetCount","appSaveCount","appSaveIncoming","appCreateSupply","appRecentSupply","appGetSupplyList","appGetSupplyAudit","appSaveSupplyList","appFinishSupply","appRecentIncoming","appGetIncomingReceipt","appGetAudit","appUndoLastAudit","appGetTotalState"]);
  if(u.role!=="ADMIN"&&!waiterAllowed.has(method))bad("Ova funkcija dostupna je samo administratoru.",403);
  if(u.role!=="ADMIN"&&(method==="appGetCount"||method==="appSaveCount")&&text(args[1])!=="fridge")bad("Konobar može uređivati samo rupe u frižideru.",403);
  if(method==="appGetAudit"){
@@ -172,7 +172,21 @@ async function handle(db,method,args,env){
  if(method==="appGetCatalog"){const items=await allItems(db);return{sections:modes.filter(m=>m!=="fridge").map(category=>({key:category,title:({pivo:"Pivo",pica:"Pića",zesta:"Žesta",toplo:"Topli napitci"})[category],items:items.filter(i=>i.category===category).map(i=>({key:i.id,mode:i.category,section_name:i.category,group_name:i.group_name,item_name:i.name,current_qty:i.qty,unit_price:i.price,min_qty:i.min_qty}))})),updatedAt:timestamp()}}
  if(method==="appGetCount"){const category=text(args[1]);if(!modes.includes(category))bad("Nepoznata kategorija.");const items=await allItems(db,category);return{sheetName:category,updatedAt:timestamp(),rows:items.map(i=>({item_location_id:i.id,group_name:i.group_name,item_name:i.name,count_mode:category==="fridge"?"holes":"quantity",full_capacity:category==="fridge"?i.capacity:null,current_qty:category==="fridge"?Math.max(0,(i.capacity||0)-i.qty):i.qty,unit_price:i.price}))}}
  if(method==="appSaveCount"){const category=text(args[1]),entries=args[2],note=text(args[3],250);if(!modes.includes(category))bad("Nepoznata kategorija.");const items=await getEntries(db,entries);const changes=items.map((it,i)=>{if(it.category!==category)bad("Artikl nije u ovoj kategoriji.");const v=qty(entries[i].value,true);if(category==="fridge"&&!Number.isInteger(v))bad("Rupe u frižideru moraju biti cijeli brojevi.");const wanted=category==="fridge"?(it.capacity??0)-v:v;if(wanted<0)bad("Broj praznih mjesta prelazi kapacitet.");return{id:it.id,name:it.name,before:it.qty,delta:Math.round((wanted-it.qty)*1000)/1000,version:it.version,capacity:it.capacity}});await atomicMutations(db,changes,u,note,"INVENTURA");return{saved:changes.length,timestamp:timestamp()}}
- if(method==="appSaveIncoming"){const entries=args[1],note=text(args[2],250),items=await getEntries(db,entries);const changes=items.map((it,i)=>{if(it.category==="fridge")bad("Primka robe unosi se u skladišne kategorije.");return{id:it.id,name:it.name,before:it.qty,delta:qty(entries[i].value),version:it.version,capacity:it.capacity}});await atomicMutations(db,changes,u,note,"PRIMKA");return{saved:changes.length,timestamp:timestamp()}}
+ if(method==="appSaveIncoming"){
+  const entries=args[1],note=text(args[2],250),items=await getEntries(db,entries),receiptId=uid();
+  const changes=items.map((it,i)=>{if(it.category==="fridge")bad("Primka robe unosi se u skladišne kategorije.");return{id:it.id,name:it.name,before:it.qty,delta:qty(entries[i].value),version:it.version,capacity:it.capacity}});
+  const queries=[];
+  for(const c of changes){
+   const after=Math.round((c.before+c.delta)*1000)/1000;
+   if(c.capacity!==null&&c.capacity!==undefined&&after>c.capacity)bad(c.name+": količina prelazi kapacitet.");
+   queries.push(db.prepare("UPDATE items SET qty=?,version=version+1 WHERE id=? AND version=? AND active=1").bind(after,c.id,c.version));
+   queries.push(db.prepare("INSERT INTO guard_checks(ok) SELECT changes()"));
+   queries.push(db.prepare("INSERT INTO movements(id,item_id,movement_type,delta,before_qty,after_qty,actor_id,note) VALUES(?,?,?,?,?,?,?,?)").bind(uid(),c.id,"PRIMKA",c.delta,c.before,after,u.id,"@PRIMKA:"+receiptId+"|"+note));
+  }
+  queries.push(db.prepare("DELETE FROM guard_checks"));
+  try{await db.batch(queries)}catch{bad("Zalihe su se promijenile tijekom unosa. Osvježi i pokušaj ponovno.",409)}
+  return{saved:changes.length,receiptId,timestamp:timestamp()};
+ }
 
  if(method==="appCreateSupply"){
   const entries=args[1],note=text(args[2],250),items=await getEntries(db,entries),id=uid();
@@ -289,7 +303,37 @@ async function handle(db,method,args,env){
   }))}}
  }
  if(method==="appCreateSnapshot"){await admin(db,token);const items=await allItems(db),id=uid();await db.batch([db.prepare("INSERT INTO snapshots(id,created_by) VALUES(?,?)").bind(id,u.id),...items.map(it=>db.prepare("INSERT INTO snapshot_lines(snapshot_id,item_id,qty) VALUES(?,?,?)").bind(id,it.id,it.qty))]);return{ok:true}}
- if(method==="appRecentIncoming"){return(await db.prepare("SELECT m.created_at AS createdAt,m.movement_type AS type,i.name AS item,m.delta AS qty FROM movements m JOIN items i ON i.id=m.item_id WHERE m.actor_id=? AND m.movement_type='PRIMKA' ORDER BY m.created_at DESC LIMIT 30").bind(u.id).all()).results}
+ if(method==="appRecentIncoming"){
+  const raw=await db.prepare("SELECT m.id,m.actor_id AS actorId,m.created_at AS createdAt,m.note,m.delta AS qty,u.name AS actor FROM movements m JOIN users u ON u.id=m.actor_id WHERE m.movement_type='PRIMKA' AND (m.actor_id=? OR ?='ADMIN') ORDER BY m.created_at DESC,m.rowid DESC LIMIT 2000").bind(u.id,u.role).all();
+  const grouped=new Map();
+  for(const row of raw.results){
+   const tagged=String(row.note||"").match(/^@PRIMKA:([a-f0-9-]{36})\|/);
+   const groupKey=tagged?"new:"+tagged[1]:"old:"+row.actorId+"|"+row.createdAt+"|"+(row.note||"");
+   if(!grouped.has(groupKey))grouped.set(groupKey,{receiptId:tagged?"new:"+tagged[1]:"old:"+row.id,createdAt:row.createdAt,actor:row.actor,itemCount:0,note:tagged?row.note.slice(45):row.note||"",legacy:!tagged});
+   grouped.get(groupKey).itemCount++;
+  }
+  return[...grouped.values()].slice(0,60);
+ }
+ if(method==="appGetIncomingReceipt"){
+  const ref=text(args[1],130),isNew=ref.startsWith("new:"),isOld=ref.startsWith("old:");
+  if(!isNew&&!isOld)bad("Primka nije pronađena.",404);
+  let query,bind;
+  if(isNew){
+   const id=ref.slice(4);
+   if(!/^[a-f0-9-]{36}$/.test(id))bad("Neispravan broj primke.");
+   query="SELECT m.created_at AS createdAt,m.note,m.delta AS qty,m.before_qty AS beforeQty,m.after_qty AS afterQty,u.name AS actor,i.name AS item,i.group_name AS 'group',i.category AS section FROM movements m JOIN users u ON u.id=m.actor_id JOIN items i ON i.id=m.item_id WHERE m.movement_type='PRIMKA' AND m.note LIKE ? AND (m.actor_id=? OR ?='ADMIN') ORDER BY i.category,i.group_name,i.name";
+   bind=["@PRIMKA:"+id+"|%",u.id,u.role];
+  }else{
+   const anchor=await db.prepare("SELECT id,actor_id,created_at,note FROM movements WHERE id=? AND movement_type='PRIMKA' AND (actor_id=? OR ?='ADMIN')").bind(ref.slice(4),u.id,u.role).first();
+   if(!anchor)bad("Primka nije pronađena.",404);
+   query="SELECT m.created_at AS createdAt,m.note,m.delta AS qty,m.before_qty AS beforeQty,m.after_qty AS afterQty,u.name AS actor,i.name AS item,i.group_name AS 'group',i.category AS section FROM movements m JOIN users u ON u.id=m.actor_id JOIN items i ON i.id=m.item_id WHERE m.movement_type='PRIMKA' AND m.actor_id=? AND m.created_at=? AND m.note=? ORDER BY i.category,i.group_name,i.name";
+   bind=[anchor.actor_id,anchor.created_at,anchor.note];
+  }
+  const rows=(await db.prepare(query).bind(...bind).all()).results;
+  if(!rows.length)bad("Primka nije pronađena.",404);
+  const first=rows[0],tagged=isNew;
+  return{receiptId:ref,createdAt:first.createdAt,actor:first.actor,note:tagged?String(first.note||"").slice(45):first.note||"",legacy:!tagged,itemCount:rows.length,items:rows.map(r=>({item:r.item,group:r.group,section:r.section,qty:r.qty,beforeQty:r.beforeQty,afterQty:r.afterQty}))};
+ }
  if(method==="appAdminGetData"){await admin(db,token);const users=(await db.prepare("SELECT id,name,role,active FROM users ORDER BY name").all()).results;const items=await allItems(db);return{admin:{id:u.id,name:u.name},users:users.map(x=>({...x,active:!!x.active})),items:items.map(it=>({key:it.id,type:it.category==="fridge"?"FRIDGE":"STOCK",mode:it.category,group:it.group_name,item:it.name,price:it.price,capacity:it.capacity,minQty:it.min_qty}))}}
  if(method==="appAdminEditUser"){await admin(db,token);const userId=text(args[1]),name=text(args[2],80),pin=String(args[3]??"");if(!name)bad("Upiši ime konobara.");const target=await db.prepare("SELECT id,role FROM users WHERE id=? AND active=1").bind(userId).first();if(!target||target.role!=="KONOBAR")bad("Konobar nije pronađen.");if(pin&& !/^[0-9]{4,8}$/.test(pin))bad("PIN mora imati 4 do 8 znamenki.");if(pin){const salt=randomHex();await db.batch([db.prepare("UPDATE users SET name=?,pin_salt=?,pin_hash=?,failed_attempts=0,locked_until=0 WHERE id=?").bind(name,salt,await pinHash(pin,salt),userId),db.prepare("DELETE FROM sessions WHERE user_id=?").bind(userId)])}else await db.prepare("UPDATE users SET name=? WHERE id=?").bind(name,userId).run();return handle(db,"appAdminGetData",[token],env)}
  if(method==="appAdminAddUser"){await admin(db,token);const name=text(args[1],80),pin=String(args[2]);if(!name||!/^[0-9]{4,8}$/.test(pin))bad("Upiši ime i PIN od 4 do 8 znamenki.");const salt=randomHex();await db.prepare("INSERT INTO users(id,name,role,pin_salt,pin_hash) VALUES(?,?,?,?,?)").bind(uid(),name,"KONOBAR",salt,await pinHash(pin,salt)).run();return handle(db,"appAdminGetData",[token],env)}
