@@ -177,7 +177,7 @@ async function handle(db,method,args,env){
  if(method==="appCreateSupply"){
   const entries=args[1],note=text(args[2],250),items=await getEntries(db,entries),id=uid();
   const queries=[db.prepare("INSERT INTO supply_requests(id,created_by,note) VALUES(?,?,?)").bind(id,u.id,note)];
-  items.forEach((it,i)=>{const amount=qty(entries[i].value);if(it.category==="fridge")bad("Donos se bira iz skladišta.");if(it.category==="zesta"&&amount!==0.5&&amount!==0.7)bad("Za žestu odaberi samo 0,5 ili 0,7 l.");queries.push(db.prepare("INSERT INTO supply_lines(id,request_id,item_id,qty,stock_before) VALUES(?,?,?,?,?)").bind(uid(),id,it.id,amount,it.qty))});
+  items.forEach((it,i)=>{const amount=qty(entries[i].value);if(it.category==="fridge")bad("Donos se bira iz skladišta.");queries.push(db.prepare("INSERT INTO supply_lines(id,request_id,item_id,qty,stock_before) VALUES(?,?,?,?,?)").bind(uid(),id,it.id,amount,it.qty))});
   await db.batch(queries);return{listId:id,saved:items.length,status:"CEKA"};
  }
  if(method==="appRecentSupply"){
@@ -212,7 +212,7 @@ async function handle(db,method,args,env){
    const key=text(d.key,100),l=byId.get(key);if(!l||seen.has(key))bad("Artikli popisa nisu ispravni.");seen.add(key);
    if(!l.active)bad(l.name+": artikl nije aktivan.");
    const amount=qty(d.value??d.qty),oldQty=qty(l.qty);
-   if(l.category==="zesta"&&amount!==oldQty&&amount!==0.5&&amount!==0.7)bad(l.name+": za žestu odaberi 0,5 ili 0,7 l.");
+   
    if(d.originalQty!==undefined&&Math.abs(qty(d.originalQty)-oldQty)>0.0001)bad("Popis je promijenjen na drugom uređaju. Osvježi.",409);
    if(d.originalDecision!==undefined&&text(d.originalDecision)!==text(l.decision))bad("Potvrde su promijenjene. Osvježi popis.",409);
    const decision=text(d.decision,20);
