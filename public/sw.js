@@ -1,1 +1,29 @@
-const CACHE='skladiste-shell-v1';const SHELL=['/','/index.html','/manifest.webmanifest','/icon.svg'];self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()))});self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});self.addEventListener('fetch',e=>{const r=e.request;if(r.method!=='GET'||new URL(r.url).origin!==self.location.origin)return;const u=new URL(r.url);if(u.pathname.startsWith('/api')||u.pathname.includes('/rpc'))return;if(r.mode==='navigate'){e.respondWith(fetch(r).catch(()=>caches.match('/index.html')));return}if(SHELL.includes(u.pathname)){e.respondWith(fetch(r).then(res=>{if(res.ok){const copy=res.clone();caches.open(CACHE).then(c=>c.put(r,copy))}return res}).catch(()=>caches.match(r)));}});
+const CACHE='skladiste-shell-v2';
+const SHELL=['/','/index.html','/manifest.webmanifest','/icon.svg'];
+self.addEventListener('install',event=>{
+  event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()));
+});
+self.addEventListener('activate',event=>{
+  event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim()));
+});
+self.addEventListener('fetch',event=>{
+  const request=event.request;
+  if(request.method!=='GET'||new URL(request.url).origin!==self.location.origin)return;
+  const url=new URL(request.url);
+  if(url.pathname.startsWith('/api')||url.pathname.includes('/rpc'))return;
+  if(request.mode==='navigate'||SHELL.includes(url.pathname)){
+    event.respondWith(
+      fetch(new Request(request,{cache:'no-store'}))
+        .then(response=>{
+          if(response.ok){
+            const copy=response.clone();
+            event.waitUntil(caches.open(CACHE).then(cache=>cache.put(request,copy)));
+          }
+          return response;
+        })
+        .catch(async()=>{
+          return await caches.match(request)||await caches.match('/index.html')||Response.error();
+        })
+    );
+  }
+});
